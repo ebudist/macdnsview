@@ -18,7 +18,7 @@ A change is done when all three pass. Tests that hit the network run only with `
 
 ## Code
 
-- `MacDNSViewCore` holds all DNS, parsing, and export logic and imports Foundation and Network only. `macdnsview` (CLI) and `MacDNSViewApp` (SwiftUI) stay thin.
+- `MacDNSViewCore` holds all DNS, parsing, and export logic and imports Foundation, Network, and SystemConfiguration only. `macdnsview` (CLI) and `MacDNSViewApp` (SwiftUI) stay thin.
 - Swift 6 language mode, strict concurrency, macOS 14 minimum.
 - Stdlib and Apple frameworks only. A new package dependency needs an ADR first.
 - Each new record type ships with its decoder and a fixture captured from a real server response.
