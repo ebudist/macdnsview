@@ -2,9 +2,9 @@
 
 Look up DNS records for many domains and IP addresses at once, against your system resolver or any DNS server, and export the results. A native macOS app plus a CLI.
 
-Status: early development. Nothing usable yet.
+Status: 0.1, the first release. Expect rough edges.
 
-## Planned for 0.1
+## Features
 
 - Record types: A, AAAA, CNAME, MX, NS, SOA, SRV, TXT, CAA, DMARC, and PTR for IP addresses.
 - Any DNS server, or the system configuration including VPN scoped servers.
