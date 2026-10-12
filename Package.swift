@@ -9,6 +9,6 @@ let package = Package(
         .executableTarget(name: "macdnsview", dependencies: ["MacDNSViewCore"]),
         // Not "MacDNSView": would collide with "macdnsview" in .build on case-insensitive APFS.
         .executableTarget(name: "MacDNSViewApp", dependencies: ["MacDNSViewCore"]),
-        .testTarget(name: "MacDNSViewCoreTests", dependencies: ["MacDNSViewCore"]),
+        .testTarget(name: "MacDNSViewCoreTests", dependencies: ["MacDNSViewCore"], resources: [.copy("Fixtures")]),
     ]
 )
