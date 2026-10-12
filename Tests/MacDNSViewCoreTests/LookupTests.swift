@@ -177,3 +177,16 @@ func realLookupThroughSystemConfiguration() async {
     #expect(rows.contains { $0.target == "1.1.1.1" && $0.name == "one.one.one.one" })
     #expect(rows.contains { $0.target == "nxdomain.invalid" && $0.error == "NXDOMAIN" })
 }
+
+@Test func duplicatesKeepTheirCanonicalPlaceWhateverArrivesFirst() async {
+    var fake = FakeDNS()
+    fake.answers = ["www.example.com A": [.cname("example.net"), .a("192.0.2.20")], "www.example.com CNAME": [.cname("example.net")]]
+    var lookup = lookup(fake) { $0.types = [.a, .cname] }
+    let answers = fake
+    // Make the A answer arrive last.
+    lookup.query = { name, type, server in
+        if type == .a { try await Task.sleep(for: .milliseconds(50)) }
+        return try await answers.query(name, type, server)
+    }
+    #expect(await lookup.run(Target.parse("www.example.com")).map(\.type) == [.cname, .a])
+}

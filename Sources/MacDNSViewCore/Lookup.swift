@@ -60,12 +60,16 @@ public struct Lookup: Sendable {
     public func run(_ targets: [Target]) async -> [Row] {
         var rows: [Row] = []
         for await row in stream(targets) { rows.append(row) }
-        rows.sort { $0.order.lexicographicallyPrecedes($1.order) }
+        // Deduplicating after sorting keeps the canonical first copy, whichever answer arrived first.
+        var seen = Set<[String]>()
+        rows = rows.sorted { $0.order.lexicographicallyPrecedes($1.order) }.filter { row in
+            seen.insert([row.target, row.type.description, row.name, row.data, row.section?.rawValue ?? "", row.error ?? ""]).inserted
+        }
         for i in rows.indices { rows[i].index = i + 1 }
         return rows
     }
 
-    /// Rows as answers arrive, indexed in arrival order.
+    /// Rows as answers arrive, indexed in arrival order. Duplicates are left in; `run` removes them.
     public func stream(_ targets: [Target]) -> AsyncStream<Row> {
         AsyncStream { continuation in
             let task = Task {
@@ -89,7 +93,6 @@ public struct Lookup: Sendable {
     private func execute(_ targets: [Target], emit: (Row) -> Void) async {
         let config = server == nil ? resolvers() : ResolverConfiguration(defaultServers: [])
         var pending = targets.indices.flatMap { initialJobs(for: targets[$0], at: $0) }[...]
-        var seen = Set<[String]>()
         var index = 0
         var running = 0
 
@@ -112,8 +115,6 @@ public struct Lookup: Sendable {
                 let (rows, followUps) = interpret(job, server: server, result: result, targets: targets)
                 pending.append(contentsOf: followUps)
                 for row in rows {
-                    let key = [String(job.target), row.type.description, row.name, row.data, row.section?.rawValue ?? "", row.error ?? ""]
-                    guard seen.insert(key).inserted else { continue }
                     index += 1
                     var row = row
                     row.index = index
