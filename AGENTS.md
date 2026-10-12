@@ -14,7 +14,7 @@ scripts/check-prose.sh                       # tracked text
 scripts/check-prose.sh --commits main..HEAD  # plus commit messages
 ```
 
-A change is done when all three pass. With Command Line Tools only (no Xcode), Swift 6.4 loses the `TestingMacros` plugin during parallel builds; use `swift test -j 1`. Tests that hit the network run only with `MACDNSVIEW_NET_TESTS=1`; everything else runs offline against captured response fixtures.
+A change is done when all three pass. With Command Line Tools only (no Xcode), Swift 6.4 sometimes fails to load the `TestingMacros` plugin after a source change; `swift test -j 1` makes it rarer, and a rerun passes. Tests that hit the network run only with `MACDNSVIEW_NET_TESTS=1`; everything else runs offline against captured response fixtures.
 
 ## Code
 
