@@ -1,0 +1,25 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches Version.swift
+        run: grep -qx "public let version = \"${GITHUB_REF_NAME#v}\"" Sources/MacDNSViewCore/Version.swift
+
+      - run: swift test
+      - run: scripts/bundle.sh
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --title "$GITHUB_REF_NAME" --generate-notes
