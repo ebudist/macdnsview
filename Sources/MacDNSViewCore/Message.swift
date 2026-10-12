@@ -110,7 +110,9 @@ public struct Message: Equatable, Sendable {
         bytes.append16(1) // IN
         return Data(bytes)
     }
+}
 
+extension Message {
     public init(decoding data: Data) throws {
         var r = Reader(Array(data))
         id = try r.u16()

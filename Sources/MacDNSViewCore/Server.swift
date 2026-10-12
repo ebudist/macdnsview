@@ -137,5 +137,5 @@ private func resolveOnce(_ host: String) -> String? {
     var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
     guard getnameinfo(first.pointee.ai_addr, first.pointee.ai_addrlen, &buffer, socklen_t(buffer.count),
                       nil, 0, NI_NUMERICHOST) == 0 else { return nil }
-    return String(cString: buffer)
+    return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
 }
