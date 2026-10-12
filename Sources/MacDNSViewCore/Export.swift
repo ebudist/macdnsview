@@ -35,8 +35,9 @@ private func csvField(_ field: String) -> String {
 }
 
 // ponytail: widths count Characters, so CJK text misaligns by its double width; fine for DNS data.
+// Cells over 60 characters are cut so one long SPF record cannot widen the whole table; other formats stay whole.
 private func table(_ rows: [Row]) -> String {
-    let lines = [Row.columns] + rows.map(\.fields)
+    let lines = [Row.columns] + rows.map { $0.fields.map { $0.count > 60 ? $0.prefix(57) + "..." : $0 } }
     let widths = Row.columns.indices.map { column in lines.map { $0[column].count }.max() ?? 0 }
     return lines.map { fields in
         zip(fields, widths).map { $0.padding(toLength: $1, withPad: " ", startingAt: 0) }

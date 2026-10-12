@@ -52,3 +52,11 @@ private let rows = [
     #expect(html.contains("<tr class=\"error\"><td>3</td>"))
     #expect(!html.contains("\"hi\""))
 }
+
+@Test func tableCutsLongCellsOnly() {
+    let long = String(repeating: "x", count: 100)
+    let row = Row(index: 1, target: "example.com", type: .txt, name: "example.com", address: "", data: long,
+                  section: .answer, ttl: 1, server: "1.1.1.1", error: nil, order: [])
+    #expect(export([row], as: .table).contains(String(repeating: "x", count: 57) + "...  Answer"))
+    #expect(export([row], as: .csv).contains(long))
+}
