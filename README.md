@@ -18,7 +18,9 @@ Requires macOS 14 and Swift 6 (Command Line Tools are enough).
 
 ```
 swift build
-swift test
+swift test -j 1
+swift run macdnsview example.com 1.1.1.1
+swift run macdnsview --help
 ```
 
 ## Credits
