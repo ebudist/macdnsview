@@ -178,6 +178,15 @@ func realLookupThroughSystemConfiguration() async {
     #expect(rows.contains { $0.target == "nxdomain.invalid" && $0.error == "NXDOMAIN" })
 }
 
+@Test func optionsSurviveARoundTrip() throws {
+    var options = LookupOptions()
+    options.types = [.aaaa, .caa]
+    options.dmarc = true
+    options.hideAdditional = true
+    let decoded = try JSONDecoder().decode(LookupOptions.self, from: JSONEncoder().encode(options))
+    #expect(decoded == options)
+}
+
 @Test func duplicatesKeepTheirCanonicalPlaceWhateverArrivesFirst() async {
     var fake = FakeDNS()
     fake.answers = ["www.example.com A": [.cname("example.net"), .a("192.0.2.20")], "www.example.com CNAME": [.cname("example.net")]]

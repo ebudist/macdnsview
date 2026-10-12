@@ -1,7 +1,7 @@
 import Foundation
 
 /// The record types and follow-up rules chosen for a run. Defaults match DNSDataView.
-public struct LookupOptions: Equatable, Sendable {
+public struct LookupOptions: Codable, Equatable, Sendable {
     /// Queried in `RecordType.lookupOrder`, whatever order they are listed in.
     public var types: Set<RecordType> = [.ns, .mx, .a, .cname, .soa, .txt]
     /// TXT lookup on `_dmarc.<target>`.
@@ -16,12 +16,20 @@ public struct LookupOptions: Equatable, Sendable {
     public init() {}
 }
 
+extension RecordType: Codable {
+    public init(from decoder: Decoder) throws { self.init(try decoder.singleValueContainer().decode(UInt16.self)) }
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
 extension RecordType {
     public static let lookupOrder: [RecordType] = [.ns, .mx, .a, .aaaa, .cname, .soa, .srv, .txt, .caa]
 }
 
 /// One Record or Error row, shaped for the results table.
-public struct Row: Equatable, Sendable {
+public struct Row: Equatable, Identifiable, Sendable {
     public var index: Int
     public let target: String
     public let type: RecordType
@@ -35,6 +43,8 @@ public struct Row: Equatable, Sendable {
     public let error: String?
     /// Position in canonical order: Target, query, Record.
     let order: [Int]
+
+    public var id: Int { index }
 
     /// An Error row that counts as a failed lookup. NODATA is an answer, not a failure.
     public var isFailure: Bool { error != nil && error != "NODATA" }
@@ -60,16 +70,21 @@ public struct Lookup: Sendable {
     public func run(_ targets: [Target]) async -> [Row] {
         var rows: [Row] = []
         for await row in stream(targets) { rows.append(row) }
-        // Deduplicating after sorting keeps the canonical first copy, whichever answer arrived first.
+        return Lookup.canonical(rows)
+    }
+
+    /// Streamed rows put back in canonical order, without duplicates, indexed from 1.
+    /// Deduplicating after sorting keeps the canonical first copy, whichever answer arrived first.
+    public static func canonical(_ rows: [Row]) -> [Row] {
         var seen = Set<[String]>()
-        rows = rows.sorted { $0.order.lexicographicallyPrecedes($1.order) }.filter { row in
+        var rows = rows.sorted { $0.order.lexicographicallyPrecedes($1.order) }.filter { row in
             seen.insert([row.target, row.type.description, row.name, row.data, row.section?.rawValue ?? "", row.error ?? ""]).inserted
         }
         for i in rows.indices { rows[i].index = i + 1 }
         return rows
     }
 
-    /// Rows as answers arrive, indexed in arrival order. Duplicates are left in; `run` removes them.
+    /// Rows as answers arrive, indexed in arrival order. Duplicates are left in; `canonical` removes them.
     public func stream(_ targets: [Target]) -> AsyncStream<Row> {
         AsyncStream { continuation in
             let task = Task {

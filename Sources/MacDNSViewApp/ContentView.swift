@@ -1,0 +1,184 @@
+import AppKit
+import MacDNSViewCore
+import SwiftUI
+import UniformTypeIdentifiers
+
+struct ContentView: View {
+    @Bindable var session: Session
+    @SceneStorage("columns") private var columns = TableColumnCustomization<Row>()
+
+    var body: some View {
+        table
+            .overlay {
+                if session.rows.isEmpty, !session.isRunning {
+                    ContentUnavailableView {
+                        Label("No lookups yet", systemImage: "network")
+                    } description: {
+                        Text("Paste domains, IP addresses, or URLs, or drop a text file here.")
+                    } actions: {
+                        Button("Look Up…") { session.showingSheet = true }
+                    }
+                } else if !session.rows.isEmpty, session.visibleRows.isEmpty {
+                    // A leftover filter otherwise makes a finished lookup look empty.
+                    ContentUnavailableView {
+                        Label("No rows match \u{201C}\(session.search)\u{201D}", systemImage: "line.3.horizontal.decrease.circle")
+                    } actions: {
+                        Button("Clear Filter") { session.search = "" }
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) { statusLine }
+            .inspector(isPresented: $session.showingInspector) { inspector.inspectorColumnWidth(min: 240, ideal: 300) }
+            .toolbar { toolbar }
+            .sheet(isPresented: $session.showingSheet) { TargetsSheet(session: session) }
+            .dropDestination(for: URL.self) { urls, _ in
+                guard let url = urls.first, (try? session.load(url)) != nil else { return false }
+                session.run()
+                return true
+            }
+            .onCopyCommand { [NSItemProvider(object: export(session.selectedRows, as: .tsv) as NSString)] }
+    }
+
+    private var table: some View {
+        Table(session.visibleRows, selection: $session.selection, sortOrder: $session.sortOrder, columnCustomization: $columns) {
+            TableColumn("#", value: \.index) { Text(String($0.index)).monospacedDigit().foregroundStyle(.secondary) }
+                .width(min: 30, ideal: 40).customizationID("index")
+            TableColumn("Target", value: \.target) { cell($0.target, $0) }
+                .width(min: 80, ideal: 160).customizationID("target")
+            TableColumn("Type", value: \.typeName) { cell($0.typeName, $0) }
+                .width(min: 60, ideal: 64).customizationID("type")
+            TableColumn("Name", value: \.name) { cell($0.name, $0) }
+                .width(min: 80, ideal: 200).customizationID("name")
+            TableColumn("Address", value: \.address) { cell($0.address, $0) }
+                .width(min: 60, ideal: 130).customizationID("address")
+            TableColumn("Data", value: \.data) { cell($0.data, $0) }
+                .width(min: 80, ideal: 280).customizationID("data")
+            TableColumn("Section", value: \.sectionName) { cell($0.sectionName, $0) }
+                .width(min: 50, ideal: 80).customizationID("section")
+            TableColumn("TTL", value: \.ttlSortValue) { cell($0.ttl.map(String.init) ?? "", $0).monospacedDigit() }
+                .width(min: 56, ideal: 64).customizationID("ttl")
+            TableColumn("Server", value: \.server) { cell($0.server, $0) }
+                .width(min: 60, ideal: 110).customizationID("server")
+        }
+    }
+
+    private func cell(_ text: String, _ row: Row) -> Text {
+        Text(text).foregroundStyle(row.isFailure ? AnyShapeStyle(.red) : row.error != nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+    }
+
+    // A plain field, not .searchable: the search field's magnifying glass reads as a second Look Up button.
+    private var filterField: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "line.3.horizontal.decrease").foregroundStyle(.secondary)
+            TextField("Filter rows", text: $session.search)
+                .textFieldStyle(.plain)
+                .onExitCommand { session.search = "" }
+            if !session.search.isEmpty {
+                Button { session.search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Clear the filter")
+            }
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
+        .frame(width: 220)
+    }
+
+    private var statusLine: some View {
+        HStack(spacing: 8) {
+            if session.isRunning { ProgressView().controlSize(.small) }
+            Text(statusText).foregroundStyle(.secondary)
+            Spacer()
+        }
+        .font(.callout)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.bar)
+    }
+
+    private var statusText: String {
+        let failures = session.rows.filter(\.isFailure).count
+        var parts = ["\(session.rows.count) rows"]
+        if !session.search.isEmpty { parts.append("\(session.visibleRows.count) shown") }
+        if !session.selection.isEmpty { parts.append("\(session.selection.count) selected") }
+        if failures > 0 { parts.append("\(failures) failed") }
+        if session.isRunning { parts.append("looking up \(session.targetCount) targets") }
+        return parts.joined(separator: ", ")
+    }
+
+    @ViewBuilder private var inspector: some View {
+        if let row = session.selectedRows.first, session.selection.count == 1 {
+            Form {
+                ForEach(Array(zip(Row.columns, row.fields)), id: \.0) { label, value in
+                    LabeledContent(label) { Text(value).textSelection(.enabled) }
+                }
+            }
+            .formStyle(.grouped)
+        } else {
+            ContentUnavailableView(session.selection.isEmpty ? "No selection" : "\(session.selection.count) rows selected", systemImage: "sidebar.right")
+        }
+    }
+
+    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        ToolbarItemGroup {
+            Button { session.showingSheet = true } label: { Label("Look Up", systemImage: "network") }
+                .labelStyle(.titleAndIcon)
+                .help("Targets and options (⌘K)")
+            if session.isRunning {
+                Button { session.stop() } label: { Label("Stop", systemImage: "stop.fill") }
+                    .help("Stop the running lookups")
+            } else {
+                Button { session.run() } label: { Label("Refresh", systemImage: "arrow.clockwise") }
+                    .help("Look up the same Targets again (⌘R)")
+                    .disabled(session.targetsText.isEmpty)
+            }
+            Button { exportRows(session) } label: { Label("Export", systemImage: "square.and.arrow.up") }
+                .help("Export the selected rows, or all rows (⌘S)")
+                .disabled(session.rows.isEmpty)
+            Button { session.showingInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
+                .help("Show every field of the selected row (⌘I)")
+        }
+        ToolbarItem { filterField }
+    }
+}
+
+/// The format follows the file extension the user picks; plain text gets the aligned table.
+@MainActor func exportRows(_ session: Session) {
+    guard !session.rows.isEmpty else { return }
+    let rows = session.selectedRows.isEmpty ? session.visibleRows : session.selectedRows
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "macdnsview.csv"
+    panel.allowedContentTypes = [.commaSeparatedText, .tabSeparatedText, .json, .html, .plainText]
+    panel.allowsOtherFileTypes = false
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    let format: ExportFormat = switch url.pathExtension.lowercased() {
+    case "csv": .csv
+    case "tsv", "tab": .tsv
+    case "json": .json
+    case "html", "htm": .html
+    default: .table
+    }
+    do {
+        try export(rows, as: format).write(to: url, atomically: true, encoding: .utf8)
+    } catch {
+        NSAlert(error: error).runModal()
+    }
+}
+
+extension Row {
+    var typeName: String { type.description }
+    var sectionName: String { section?.rawValue ?? "" }
+    var ttlSortValue: Int { ttl.map(Int.init) ?? -1 }
+}
+
+/// @FocusState does not reach views in a macOS toolbar, so Find makes the AppKit field first responder.
+@MainActor func focusFilter() {
+    guard let window = NSApp.keyWindow, let root = window.contentView?.superview else { return }
+    func find(_ view: NSView) -> NSTextField? {
+        if let field = view as? NSTextField, field.isEditable, field.placeholderString == "Filter rows" { return field }
+        return view.subviews.lazy.compactMap(find).first
+    }
+    if let field = find(root) { window.makeFirstResponder(field) }
+}

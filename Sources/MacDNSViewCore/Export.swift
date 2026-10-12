@@ -7,7 +7,7 @@ public enum ExportFormat: String, CaseIterable, Sendable {
 extension Row {
     public static let columns = ["Index", "Target", "Type", "Name", "Address", "Data", "Section", "TTL", "Server"]
 
-    var fields: [String] {
+    public var fields: [String] {
         [String(index), target, type.description, name, address, data, section?.rawValue ?? "", ttl.map(String.init) ?? "", server]
     }
 }
