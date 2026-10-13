@@ -1,13 +1,18 @@
 #!/bin/bash
 # Universal release build: ad-hoc signed MacDNSView.app and macdnsview CLI, zipped into dist/
+# --host builds this Mac's architecture only and skips the zips; other arguments go to swift build.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 version=$(sed -n 's/^public let version = "\(.*\)"$/\1/p' Sources/MacDNSViewCore/Version.swift)
 [ -n "$version" ] || { echo "no version in Version.swift" >&2; exit 1; }
 
-swift build -c release --arch arm64 --arch x86_64
-bin=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
+archs="--arch arm64 --arch x86_64"
+zip=1
+if [ "${1:-}" = --host ]; then archs= zip=; shift; fi
+
+swift build -c release $archs "$@"
+bin=$(swift build -c release $archs "$@" --show-bin-path)
 
 rm -rf dist
 app=dist/MacDNSView.app
@@ -47,6 +52,7 @@ EOF
 codesign --force --sign - "$app"
 codesign --force --sign - dist/macdnsview
 
+[ -n "$zip" ] || exit 0
 ditto -c -k --norsrc --noextattr --keepParent "$app" "dist/MacDNSView-$version.zip"
 ditto -c -k --norsrc --noextattr dist/macdnsview "dist/macdnsview-cli-$version.zip"
 echo "dist/MacDNSView-$version.zip"
