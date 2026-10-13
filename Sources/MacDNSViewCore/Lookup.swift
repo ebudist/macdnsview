@@ -118,8 +118,11 @@ public struct Lookup: Sendable {
                 let server = self.server ?? config.servers(for: job.name).first
                 group.addTask {
                     guard let server else { return (job, nil, .failure(LookupError.noServer)) }
-                    do { return (job, server, .success(try await query(job.name, job.type, server))) }
-                    catch { return (job, server, .failure(error)) }
+                    do {
+                        // An await inside the tuple loses `server` in release builds from Swift 6.4 Command Line Tools.
+                        let message = try await query(job.name, job.type, server)
+                        return (job, server, .success(message))
+                    } catch { return (job, server, .failure(error)) }
                 }
             }
             func refill() { while running < maxConcurrent, !pending.isEmpty { startNext() } }

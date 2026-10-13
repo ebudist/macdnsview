@@ -26,3 +26,4 @@ jobs:
 
       - run: swift build
       - run: swift test
+      - run: swift test -c release -Xswiftc -enable-testing
