@@ -14,9 +14,25 @@ Status: 0.1, the first release. Expect rough edges.
 
 ## Install
 
-Download `MacDNSView-<version>.zip` (the app) or `macdnsview-cli-<version>.zip` (the CLI) from [Releases](https://github.com/ebudist/macdnsview/releases). Both are universal binaries for Apple silicon and Intel, macOS 14 or later.
+Requires macOS 14 or later.
 
-The builds are ad-hoc signed, not notarized, so Gatekeeper blocks them the first time. After unzipping, clear the quarantine flag:
+### Homebrew
+
+```
+brew install ebudist/tap/macdnsview
+```
+
+This builds the `macdnsview` CLI and `MacDNSView.app` from source on your Mac, so Gatekeeper does not block them. To open the app from Launchpad and Spotlight, link it into Applications:
+
+```
+ln -sf "$(brew --prefix)/opt/macdnsview/MacDNSView.app" /Applications/MacDNSView.app
+```
+
+### Download
+
+Download `MacDNSView-<version>.zip` (the app) or `macdnsview-cli-<version>.zip` (the CLI) from [Releases](https://github.com/ebudist/macdnsview/releases). Both are universal binaries for Apple silicon and Intel.
+
+The downloads are ad-hoc signed, not notarized, so Gatekeeper blocks them the first time. After unzipping, clear the quarantine flag:
 
 ```
 xattr -d com.apple.quarantine MacDNSView.app
