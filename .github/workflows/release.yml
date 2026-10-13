@@ -27,11 +27,17 @@ jobs:
       - name: Update the Homebrew tap
         env:
           GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+          REPO: ebudist/homebrew-tap
+          FILE: Formula/macdnsview.rb
         run: |
           url="https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$GITHUB_REF_NAME.tar.gz"
           sha=$(curl -fsSL "$url" | shasum -a 256 | cut -d' ' -f1)
-          path=repos/ebudist/homebrew-tap/contents/Formula/macdnsview.rb
-          gh api "$path" -q .content | base64 -d \
-            | sed -E "s#^  url \".*\"#  url \"$url\"#; s#^  sha256 \".*\"#  sha256 \"$sha\"#" > macdnsview.rb
-          gh api -X PUT "$path" -f message="chore: macdnsview ${GITHUB_REF_NAME#v}" \
-            -f content="$(base64 -i macdnsview.rb)" -f sha="$(gh api "$path" -q .sha)" -q .commit.html_url
+          gh api "repos/$REPO/contents/$FILE" -q .content | base64 -d \
+            | sed -E "s#^  url \".*\"#  url \"$url\"#; s#^  sha256 \".*\"#  sha256 \"$sha\"#" > formula.rb
+          # createCommitOnBranch, unlike the contents API, gets the commit signed by GitHub.
+          jq -n --arg repo "$REPO" --arg file "$FILE" --arg head "$(gh api "repos/$REPO/commits/main" -q .sha)" \
+            --arg msg "chore: macdnsview ${GITHUB_REF_NAME#v}" --arg body "$(base64 -i formula.rb)" \
+            '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { url } } }",
+              variables: {input: {branch: {repositoryNameWithOwner: $repo, branchName: "main"}, message: {headline: $msg},
+                expectedHeadOid: $head, fileChanges: {additions: [{path: $file, contents: $body}]}}}}' \
+            | gh api graphql --input - -q .data.createCommitOnBranch.commit.url
