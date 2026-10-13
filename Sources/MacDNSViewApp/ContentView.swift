@@ -60,6 +60,16 @@ struct ContentView: View {
             TableColumn("Server", value: \.server) { cell($0.server, $0) }
                 .width(min: 60, ideal: 110).customizationID("server")
         }
+        .contextMenu(forSelectionType: Row.ID.self) { ids in
+            if !ids.isEmpty {
+                Button("Copy") { copy(session.visibleRows.filter { ids.contains($0.id) }) }
+            }
+        }
+    }
+
+    private func copy(_ rows: [Row]) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(export(rows, as: .tsv), forType: .string)
     }
 
     private func cell(_ text: String, _ row: Row) -> Text {
