@@ -2,7 +2,7 @@
 
 Look up DNS records for many domains and IP addresses at once, against your system resolver or any DNS server, and export the results. A native macOS app plus a CLI.
 
-Status: 0.1, the first release. Expect rough edges.
+Status: early releases. Expect rough edges.
 
 ## Features
 
