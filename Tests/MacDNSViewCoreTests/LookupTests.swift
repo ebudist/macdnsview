@@ -199,3 +199,10 @@ func realLookupThroughSystemConfiguration() async {
     }
     #expect(await lookup.run(Target.parse("www.example.com")).map(\.type) == [.cname, .a])
 }
+
+@Test func everyAddressOfANameGetsItsOwnRow() async {
+    var fake = FakeDNS()
+    fake.answers = ["example.com A": [.a("192.0.2.1"), .a("192.0.2.2")], "example.com AAAA": [.aaaa("2001:db8::1"), .aaaa("2001:db8::2")]]
+    let rows = await lookup(fake) { $0.types = [.a, .aaaa] }.run(Target.parse("example.com"))
+    #expect(rows.map(\.address) == ["192.0.2.1", "192.0.2.2", "2001:db8::1", "2001:db8::2"])
+}

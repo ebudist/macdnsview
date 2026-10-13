@@ -78,7 +78,7 @@ public struct Lookup: Sendable {
     public static func canonical(_ rows: [Row]) -> [Row] {
         var seen = Set<[String]>()
         var rows = rows.sorted { $0.order.lexicographicallyPrecedes($1.order) }.filter { row in
-            seen.insert([row.target, row.type.description, row.name, row.data, row.section?.rawValue ?? "", row.error ?? ""]).inserted
+            seen.insert([row.target, row.type.description, row.name, row.address, row.data, row.section?.rawValue ?? "", row.error ?? ""]).inserted
         }
         for i in rows.indices { rows[i].index = i + 1 }
         return rows
