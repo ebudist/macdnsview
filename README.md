@@ -30,16 +30,7 @@ ln -sf "$(brew --prefix)/opt/macdnsview/MacDNSView.app" /Applications/MacDNSView
 
 ### Download
 
-Download `MacDNSView-<version>.zip` (the app) or `macdnsview-cli-<version>.zip` (the CLI) from [Releases](https://github.com/ebudist/macdnsview/releases). Both are universal binaries for Apple silicon and Intel.
-
-The downloads are ad-hoc signed, not notarized, so Gatekeeper blocks them the first time. After unzipping, clear the quarantine flag:
-
-```
-xattr -d com.apple.quarantine MacDNSView.app
-xattr -d com.apple.quarantine macdnsview
-```
-
-Move `MacDNSView.app` to `/Applications` and `macdnsview` to a directory on your `PATH`, such as `/usr/local/bin`.
+Universal zips for the app and the CLI are on [Releases](https://github.com/ebudist/macdnsview/releases). They are not notarized, so clear the quarantine flag after unzipping: `xattr -dr com.apple.quarantine MacDNSView.app macdnsview`.
 
 ## Build
 
