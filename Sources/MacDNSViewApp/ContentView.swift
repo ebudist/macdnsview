@@ -73,7 +73,7 @@ struct ContentView: View {
     }
 
     private func cell(_ text: String, _ row: Row) -> Text {
-        Text(text).foregroundStyle(row.isFailure ? AnyShapeStyle(.red) : row.error != nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+        Text(text).foregroundStyle(row.isFailure ? AnyShapeStyle(.red) : row.error != nil ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
     }
 
     private var searchField: some View {
