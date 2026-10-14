@@ -28,7 +28,7 @@ struct MacDNSViewApp: App {
                     .disabled(session.rows.isEmpty)
             }
             CommandGroup(after: .textEditing) {
-                Button("Find") { focusFilter() }
+                Button("Find") { focusSearch() }
                     .keyboardShortcut("f")
             }
             CommandGroup(after: .sidebar) {

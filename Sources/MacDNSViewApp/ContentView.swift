@@ -19,11 +19,11 @@ struct ContentView: View {
                         Button("Look Up…") { session.showingSheet = true }
                     }
                 } else if !session.rows.isEmpty, session.visibleRows.isEmpty {
-                    // A leftover filter otherwise makes a finished lookup look empty.
+                    // A leftover search otherwise makes a finished lookup look empty.
                     ContentUnavailableView {
-                        Label("No rows match \u{201C}\(session.search)\u{201D}", systemImage: "line.3.horizontal.decrease.circle")
+                        Label("No rows match \u{201C}\(session.search)\u{201D}", systemImage: "magnifyingglass")
                     } actions: {
-                        Button("Clear Filter") { session.search = "" }
+                        Button("Clear Search") { session.search = "" }
                     }
                 }
             }
@@ -76,24 +76,47 @@ struct ContentView: View {
         Text(text).foregroundStyle(row.isFailure ? AnyShapeStyle(.red) : row.error != nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
     }
 
-    // A plain field, not .searchable: the search field's magnifying glass reads as a second Look Up button.
-    private var filterField: some View {
+    private var searchField: some View {
         HStack(spacing: 4) {
-            Image(systemName: "line.3.horizontal.decrease").foregroundStyle(.secondary)
-            TextField("Filter rows", text: $session.search)
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Search", text: $session.search)
                 .textFieldStyle(.plain)
                 .onExitCommand { session.search = "" }
             if !session.search.isEmpty {
                 Button { session.search = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help("Clear the filter")
+                    .help("Clear the search")
             }
         }
         .padding(.horizontal, 7)
         .padding(.vertical, 4)
         .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
         .frame(width: 220)
+    }
+
+    private static let columnNames = [("#", "index"), ("Target", "target"), ("Type", "type"), ("Name", "name"), ("Address", "address"),
+                                      ("Data", "data"), ("Section", "section"), ("TTL", "ttl"), ("Server", "server")]
+
+    // Same customization as the header right-click, so both stay in sync and persist.
+    private var columnsMenu: some View {
+        Menu {
+            ForEach(Self.columnNames, id: \.1) { name, id in
+                Toggle(name, isOn: Binding {
+                    columns[visibility: id] != .hidden
+                } set: {
+                    columns[visibility: id] = $0 ? .visible : .hidden
+                })
+            }
+            Divider()
+            Button("Show All") {
+                for (_, id) in Self.columnNames { columns[visibility: id] = .visible }
+            }
+            .disabled(Self.columnNames.allSatisfy { columns[visibility: $0.1] != .hidden })
+        } label: {
+            Label("Columns", systemImage: "tablecells")
+        }
+        .help("Choose which columns to show")
     }
 
     private var statusLine: some View {
@@ -150,7 +173,8 @@ struct ContentView: View {
             Button { session.showingInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
                 .help("Show every field of the selected row (⌘I)")
         }
-        ToolbarItem { filterField }
+        ToolbarItem { columnsMenu }
+        ToolbarItem { searchField }
     }
 }
 
@@ -184,10 +208,10 @@ extension Row {
 }
 
 /// @FocusState does not reach views in a macOS toolbar, so Find makes the AppKit field first responder.
-@MainActor func focusFilter() {
+@MainActor func focusSearch() {
     guard let window = NSApp.keyWindow, let root = window.contentView?.superview else { return }
     func find(_ view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.isEditable, field.placeholderString == "Filter rows" { return field }
+        if let field = view as? NSTextField, field.isEditable, field.placeholderString == "Search" { return field }
         return view.subviews.lazy.compactMap(find).first
     }
     if let field = find(root) { window.makeFirstResponder(field) }
