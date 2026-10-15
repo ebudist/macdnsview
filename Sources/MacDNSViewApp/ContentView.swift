@@ -61,6 +61,8 @@ struct ContentView: View {
                 .width(min: 56, ideal: 64).customizationID("ttl")
             TableColumn("Server", value: \.server) { cell($0.server, $0) }
                 .width(min: 60, ideal: 110).customizationID("server")
+            TableColumn("Time", value: \.timeSortValue) { cell($0.time.map { "\($0) ms" } ?? "", $0).monospacedDigit() }
+                .width(min: 50, ideal: 64).customizationID("time")
         }
         .contextMenu(forSelectionType: Row.ID.self) { ids in
             if !ids.isEmpty {
@@ -98,7 +100,7 @@ struct ContentView: View {
     }
 
     private static let columnNames = [("#", "index"), ("Target", "target"), ("Type", "type"), ("Name", "name"), ("Address", "address"),
-                                      ("Data", "data"), ("Section", "section"), ("TTL", "ttl"), ("Server", "server")]
+                                      ("Data", "data"), ("Section", "section"), ("TTL", "ttl"), ("Server", "server"), ("Time", "time")]
 
     // Same customization as the header right-click, so both stay in sync and persist.
     private var columnsMenu: some View {
@@ -240,6 +242,7 @@ extension Row {
     var typeName: String { type.description }
     var sectionName: String { section?.rawValue ?? "" }
     var ttlSortValue: Int { ttl.map(Int.init) ?? -1 }
+    var timeSortValue: Int { time ?? -1 }
 }
 
 /// @FocusState does not reach views in a macOS toolbar, so Find makes the AppKit field first responder.

@@ -206,3 +206,23 @@ func realLookupThroughSystemConfiguration() async {
     let rows = await lookup(fake) { $0.types = [.a, .aaaa] }.run(Target.parse("example.com"))
     #expect(rows.map(\.address) == ["192.0.2.1", "192.0.2.2", "2001:db8::1", "2001:db8::2"])
 }
+
+@Test func everyRowCarriesItsQueryTime() async {
+    var fake = exampleCom
+    fake.failures["example.com MX"] = .timeout
+    var lookup = lookup(fake) { $0.types = [.ns, .mx] }
+    let answers = fake
+    lookup.query = { name, type, server in
+        try await Task.sleep(for: .milliseconds(type == .ns ? 30 : 5))
+        return try await answers.query(name, type, server)
+    }
+    let rows = await lookup.run(Target.parse("example.com"))
+    #expect(rows.map(\.type) == [.ns, .ns, .mx])
+    #expect(rows[0].time == rows[1].time)
+    #expect(rows[0].time.map { $0 >= 30 && $0 < 1000 } == true)
+    #expect(rows[2].error == "timeout" && rows[2].time != nil)
+
+    var unserved = Lookup(options: { var o = LookupOptions(); o.types = [.a]; return o }())
+    unserved.resolvers = { ResolverConfiguration(defaultServers: []) }
+    #expect(await unserved.run(Target.parse("example.com")).map(\.time) == [nil])
+}

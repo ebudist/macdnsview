@@ -41,6 +41,8 @@ public struct Row: Equatable, Identifiable, Sendable {
     public let server: String
     /// `NXDOMAIN`, `NODATA`, `timeout`, and so on. Nil for a Record.
     public let error: String?
+    /// Milliseconds, retries included.
+    public var time: Int? = nil
     /// Position in canonical order: Target, query, Record.
     let order: [Int]
 
@@ -111,24 +113,26 @@ public struct Lookup: Sendable {
         var index = 0
         var running = 0
 
-        await withTaskGroup(of: (Job, Server?, Result<Message, Error>).self) { group in
+        await withTaskGroup(of: (Job, Server?, Result<Message, Error>, Int?).self) { group in
             func startNext() {
                 guard let job = pending.popFirst() else { return }
                 running += 1
                 let server = self.server ?? config.servers(for: job.name).first
                 group.addTask {
-                    guard let server else { return (job, nil, .failure(LookupError.noServer)) }
+                    guard let server else { return (job, nil, .failure(LookupError.noServer), nil) }
+                    let start = ContinuousClock.now
+                    func elapsed() -> Int { Int((ContinuousClock.now - start) / .milliseconds(1)) }
                     do {
                         // An await inside the tuple loses `server` in release builds from Swift 6.4 Command Line Tools.
                         let message = try await query(job.name, job.type, server)
-                        return (job, server, .success(message))
-                    } catch { return (job, server, .failure(error)) }
+                        return (job, server, .success(message), elapsed())
+                    } catch { return (job, server, .failure(error), elapsed()) }
                 }
             }
             func refill() { while running < maxConcurrent, !pending.isEmpty { startNext() } }
             refill()
 
-            for await (job, server, result) in group {
+            for await (job, server, result, time) in group {
                 running -= 1
                 let (rows, followUps) = interpret(job, server: server, result: result, targets: targets)
                 pending.append(contentsOf: followUps)
@@ -136,6 +140,7 @@ public struct Lookup: Sendable {
                     index += 1
                     var row = row
                     row.index = index
+                    row.time = time
                     emit(row)
                 }
                 refill()

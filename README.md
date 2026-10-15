@@ -10,7 +10,7 @@ Status: early releases. Expect rough edges.
 
 - Record types: A, AAAA, CNAME, MX, NS, SOA, SRV, TXT, CAA, DMARC, and PTR for IP addresses.
 - Any DNS server, or the system configuration including VPN scoped servers.
-- TTL, response section, and answering server on every row.
+- TTL, response section, answering server, and response time on every row.
 - Export to CSV, TSV, JSON, plain text, and HTML.
 - CLI for scripts: `macdnsview example.com 1.1.1.1 --type A,MX --format json`
 
