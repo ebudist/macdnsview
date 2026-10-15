@@ -8,7 +8,8 @@ Status: early releases. Expect rough edges.
 
 ## Features
 
-- Record types: A, AAAA, CNAME, MX, NS, SOA, SRV, TXT, CAA, DMARC, and PTR for IP addresses.
+- Record types: A, AAAA, CNAME, MX, NS, SOA, SRV, TXT, CAA, HTTPS, SVCB, DS, DNSKEY, DMARC, and PTR for IP addresses.
+- A Validated column with the resolver's DNSSEC result (the AD bit) for every answer.
 - Any DNS server, or the system configuration including VPN scoped servers.
 - TTL, response section, answering server, and response time on every row.
 - Export to CSV, TSV, JSON, plain text, and HTML.

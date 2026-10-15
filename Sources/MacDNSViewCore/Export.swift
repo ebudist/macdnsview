@@ -5,10 +5,10 @@ public enum ExportFormat: String, CaseIterable, Sendable {
 }
 
 extension Row {
-    public static let columns = ["Index", "Target", "Type", "Name", "Address", "Data", "Section", "TTL", "Server", "Time (ms)"]
+    public static let columns = ["Index", "Target", "Type", "Name", "Address", "Data", "Section", "TTL", "Server", "Time (ms)", "Validated"]
 
     public var fields: [String] {
-        [String(index), target, type.description, name, address, data, section?.rawValue ?? "", ttl.map(String.init) ?? "", server, time.map(String.init) ?? ""]
+        [String(index), target, type.description, name, address, data, section?.rawValue ?? "", ttl.map(String.init) ?? "", server, time.map(String.init) ?? "", validated.map { $0 ? "yes" : "no" } ?? ""]
     }
 }
 
@@ -53,6 +53,7 @@ private struct JSONRow: Encodable {
     let ttl: UInt32?
     let error: String?
     let time: Int?
+    let validated: Bool?
 
     // Keep nulls in the output so every object has the same keys.
     func encode(to encoder: Encoder) throws {
@@ -68,9 +69,10 @@ private struct JSONRow: Encodable {
         try c.encode(server, forKey: .server)
         try c.encode(error, forKey: .error)
         try c.encode(time, forKey: .time)
+        try c.encode(validated, forKey: .validated)
     }
 
-    enum CodingKeys: String, CodingKey { case index, target, type, name, address, data, section, ttl, server, error, time = "time_ms" }
+    enum CodingKeys: String, CodingKey { case index, target, type, name, address, data, section, ttl, server, error, time = "time_ms", validated }
 }
 
 private func json(_ rows: [Row]) -> String {
@@ -78,7 +80,7 @@ private func json(_ rows: [Row]) -> String {
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     let objects = rows.map {
         JSONRow(index: $0.index, target: $0.target, type: $0.type.description, name: $0.name, address: $0.address,
-                data: $0.data, server: $0.server, section: $0.section?.rawValue, ttl: $0.ttl, error: $0.error, time: $0.time)
+                data: $0.data, server: $0.server, section: $0.section?.rawValue, ttl: $0.ttl, error: $0.error, time: $0.time, validated: $0.validated)
     }
     // Encoding plain strings and integers cannot fail.
     return String(decoding: try! encoder.encode(objects), as: UTF8.self) + "\n"

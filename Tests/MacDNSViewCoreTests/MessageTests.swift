@@ -23,9 +23,30 @@ private func rr(type: UInt16, ttl: UInt32 = 300, _ rdata: [UInt8]) -> [UInt8] {
 
 @Test func queryEncoding() throws {
     let bytes = try Message.query(id: 0x1234, name: "example.com.", type: .mx)
-    #expect(Array(bytes) == [0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0,
+    #expect(Array(bytes) == [0x12, 0x34, 0x01, 0x20, 0, 1, 0, 0, 0, 0, 0, 0,
                              7] + Array("example".utf8) + [3] + Array("com".utf8) + [0, 0, 15, 0, 1])
     #expect(Array(try Message.query(id: 0, name: ".", type: .ns).suffix(5)) == [0, 0, 2, 0, 1])
+}
+
+@Test func decodesServiceAndDNSSECTypes() throws {
+    let https = try fixture("https-cloudflare.com")
+    #expect(https.isAuthenticated)
+    #expect(https.records.first?.data == .svcb(priority: 1, target: ".", params: "alpn=h3,h2 ipv4hint=104.16.132.229,104.16.133.229 ipv6hint=2606:4700::6810:84e5,2606:4700::6810:85e5"))
+
+    let svcb = try fixture("svcb-_dns.resolver.arpa")
+    #expect(!svcb.isAuthenticated)
+    #expect(svcb.records.first?.data == .svcb(priority: 1, target: "one.one.one.one", params: "alpn=h2,h3 port=443 ipv4hint=1.1.1.1,1.0.0.1 ipv6hint=2606:4700:4700::1111,2606:4700:4700::1001 dohpath=/dns-query{?dns}"))
+
+    let ds = try fixture("ds-cloudflare.com")
+    let dnskey = try fixture("dnskey-cloudflare.com")
+    guard case .ds(let tag, 13, 2, let digest) = ds.records.first?.data else { Issue.record("\(ds.records)"); return }
+    #expect(digest.count == 32)
+    // The DS names the key-signing key by its tag.
+    let ksk = dnskey.records.compactMap { record -> UInt16? in
+        guard case .dnskey(257, let proto, let algorithm, let key) = record.data else { return nil }
+        return keyTag(257, proto, algorithm, key)
+    }
+    #expect(ksk == [tag])
 }
 
 @Test(arguments: ["a..com", String(repeating: "a", count: 64) + ".com", "bücher.de",

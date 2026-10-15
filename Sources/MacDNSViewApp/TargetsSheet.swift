@@ -7,7 +7,7 @@ struct TargetsSheet: View {
     @Bindable var session: Session
     @Environment(\.dismiss) private var dismiss
 
-    private let typeGrid: [[RecordType?]] = [[.ns, .mx, .a, .aaaa], [.cname, .soa, .srv, .txt], [.caa, nil]]
+    private let typeGrid: [[RecordType?]] = [[.ns, .mx, .a, .aaaa], [.cname, .soa, .srv, .txt], [.caa, .https, .svcb, .ds], [.dnskey, nil]]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {

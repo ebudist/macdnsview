@@ -25,7 +25,7 @@ extension RecordType: Codable {
 }
 
 extension RecordType {
-    public static let lookupOrder: [RecordType] = [.ns, .mx, .a, .aaaa, .cname, .soa, .srv, .txt, .caa]
+    public static let lookupOrder: [RecordType] = [.ns, .mx, .a, .aaaa, .cname, .soa, .srv, .txt, .caa, .https, .svcb, .ds, .dnskey]
 }
 
 /// One Record or Error row, shaped for the results table.
@@ -43,6 +43,7 @@ public struct Row: Equatable, Identifiable, Sendable {
     public let error: String?
     /// Milliseconds, retries included.
     public var time: Int? = nil
+    public var validated: Bool? = nil
     /// Position in canonical order: Target, query, Record.
     let order: [Int]
 
@@ -141,6 +142,7 @@ public struct Lookup: Sendable {
                     var row = row
                     row.index = index
                     row.time = time
+                    if case .success(let message) = result { row.validated = message.isAuthenticated }
                     emit(row)
                 }
                 refill()
@@ -234,6 +236,21 @@ private func columns(_ record: Record, reversed: String?) -> (String, String, St
     case .srv(let priority, let weight, let port, let host): (host, "", "priority \(priority), weight \(weight), port \(port)")
     case .txt(let strings): (record.name, "", strings.joined())
     case .caa(let flags, let tag, let value): (record.name, "", "\(flags) \(tag) \"\(value)\"")
+    case .svcb(let priority, let target, let params):
+        (target == "." ? record.name : target, "", priority == 0 ? "alias" : (["priority \(priority)"] + (params.isEmpty ? [] : [params])).joined(separator: ", "))
+    case .ds(let keyTag, let algorithm, let digestType, let digest):
+        (record.name, "", "key tag \(keyTag), algorithm \(algorithm), digest type \(digestType), digest " + digest.map { String(format: "%02X", $0) }.joined())
+    case .dnskey(let flags, let proto, let algorithm, let key):
+        (record.name, "", "flags \(flags), protocol \(proto), algorithm \(algorithm), key tag \(keyTag(flags, proto, algorithm, key)), key \(Data(key).base64EncodedString())")
     case .unknown(let bytes): (record.name, "", "\\# \(bytes.count) " + bytes.map { String(format: "%02x", $0) }.joined())
     }
+}
+
+// RFC 4034 appendix B. Wrong for algorithm 1 (RSAMD5), which is retired.
+func keyTag(_ flags: UInt16, _ proto: UInt8, _ algorithm: UInt8, _ key: [UInt8]) -> UInt16 {
+    let rdata = [UInt8(flags >> 8), UInt8(flags & 0xFF), proto, algorithm] + key
+    var sum: UInt32 = 0
+    for (i, byte) in rdata.enumerated() { sum += i.isMultiple(of: 2) ? UInt32(byte) << 8 : UInt32(byte) }
+    sum += sum >> 16 & 0xFFFF
+    return UInt16(sum & 0xFFFF)
 }

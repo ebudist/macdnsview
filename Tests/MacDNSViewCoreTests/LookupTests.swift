@@ -28,6 +28,9 @@ private struct FakeDNS: Sendable {
         case .srv: .srv
         case .txt: .txt
         case .caa: .caa
+        case .svcb: .https
+        case .ds: .ds
+        case .dnskey: .dnskey
         case .unknown: RecordType(99)
         }
     }
@@ -136,6 +139,21 @@ private let exampleCom: FakeDNS = {
     #expect(rows.map(\.data) == ["preference 10", "priority 5, weight 0, port 993", "0 issue \"pki.goog\""])
 }
 
+@Test func serviceAndDNSSECColumns() async {
+    var fake = FakeDNS()
+    fake.answers = [
+        "example.com HTTPS": [.svcb(priority: 1, target: ".", params: "alpn=h2")],
+        "www.example.com HTTPS": [.svcb(priority: 0, target: "cdn.example.net", params: "")],
+        "example.com DS": [.ds(keyTag: 2371, algorithm: 13, digestType: 2, digest: [0xAB, 0x01])],
+        "example.com DNSKEY": [.dnskey(flags: 256, protocol: 3, algorithm: 13, key: [1, 2, 3])],
+    ]
+    let rows = await lookup(fake) { $0.types = [.https, .ds, .dnskey] }.run(Target.parse("example.com www.example.com"))
+    let found = rows.filter { $0.error == nil }
+    #expect(found.map(\.name) == ["example.com", "example.com", "example.com", "cdn.example.net"])
+    #expect(found.map(\.data) == ["priority 1, alpn=h2", "key tag 2371, algorithm 13, digest type 2, digest AB01",
+                                  "flags 256, protocol 3, algorithm 13, key tag \(keyTag(256, 3, 13, [1, 2, 3])), key AQID", "alias"])
+}
+
 @Test func systemConfigurationPicksScopedServers() async {
     var lookup = Lookup(options: { var o = LookupOptions(); o.types = [.a]; return o }())
     lookup.resolvers = { ResolverConfiguration(defaultServers: [Server(host: "1.1.1.1")], scopedServers: ["corp.internal": [Server(host: "10.0.0.53")]]) }
@@ -221,6 +239,7 @@ func realLookupThroughSystemConfiguration() async {
     #expect(rows[0].time == rows[1].time)
     #expect(rows[0].time.map { $0 >= 30 && $0 < 1000 } == true)
     #expect(rows[2].error == "timeout" && rows[2].time != nil)
+    #expect(rows[0].validated == false && rows[2].validated == nil)
 
     var unserved = Lookup(options: { var o = LookupOptions(); o.types = [.a]; return o }())
     unserved.resolvers = { ResolverConfiguration(defaultServers: []) }

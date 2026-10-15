@@ -57,12 +57,17 @@ struct ContentView: View {
                 .width(min: 80, ideal: 280).customizationID("data")
             TableColumn("Section", value: \.sectionName) { cell($0.sectionName, $0) }
                 .width(min: 50, ideal: 80).customizationID("section")
-            TableColumn("TTL", value: \.ttlSortValue) { cell($0.ttl.map(String.init) ?? "", $0).monospacedDigit() }
-                .width(min: 56, ideal: 64).customizationID("ttl")
-            TableColumn("Server", value: \.server) { cell($0.server, $0) }
-                .width(min: 60, ideal: 110).customizationID("server")
-            TableColumn("Time", value: \.timeSortValue) { cell($0.time.map { "\($0) ms" } ?? "", $0).monospacedDigit() }
-                .width(min: 50, ideal: 64).customizationID("time")
+            // The column builder takes at most 10 children.
+            Group {
+                TableColumn("TTL", value: \.ttlSortValue) { cell($0.ttl.map(String.init) ?? "", $0).monospacedDigit() }
+                    .width(min: 56, ideal: 64).customizationID("ttl")
+                TableColumn("Server", value: \.server) { cell($0.server, $0) }
+                    .width(min: 60, ideal: 110).customizationID("server")
+                TableColumn("Time", value: \.timeSortValue) { cell($0.time.map { "\($0) ms" } ?? "", $0).monospacedDigit() }
+                    .width(min: 50, ideal: 64).customizationID("time")
+                TableColumn("Validated", value: \.validatedName) { cell($0.validatedName, $0) }
+                    .width(min: 50, ideal: 64).customizationID("validated")
+            }
         }
         .contextMenu(forSelectionType: Row.ID.self) { ids in
             if !ids.isEmpty {
@@ -100,7 +105,7 @@ struct ContentView: View {
     }
 
     private static let columnNames = [("#", "index"), ("Target", "target"), ("Type", "type"), ("Name", "name"), ("Address", "address"),
-                                      ("Data", "data"), ("Section", "section"), ("TTL", "ttl"), ("Server", "server"), ("Time", "time")]
+                                      ("Data", "data"), ("Section", "section"), ("TTL", "ttl"), ("Server", "server"), ("Time", "time"), ("Validated", "validated")]
 
     // Same customization as the header right-click, so both stay in sync and persist.
     private var columnsMenu: some View {
@@ -243,6 +248,7 @@ extension Row {
     var sectionName: String { section?.rawValue ?? "" }
     var ttlSortValue: Int { ttl.map(Int.init) ?? -1 }
     var timeSortValue: Int { time ?? -1 }
+    var validatedName: String { validated.map { $0 ? "yes" : "no" } ?? "" }
 }
 
 /// @FocusState does not reach views in a macOS toolbar, so Find makes the AppKit field first responder.

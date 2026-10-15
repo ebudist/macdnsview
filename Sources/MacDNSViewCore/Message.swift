@@ -13,11 +13,15 @@ public struct RecordType: Hashable, Sendable, CustomStringConvertible {
     public static let txt = RecordType(16)
     public static let aaaa = RecordType(28)
     public static let srv = RecordType(33)
+    public static let ds = RecordType(43)
+    public static let dnskey = RecordType(48)
+    public static let svcb = RecordType(64)
+    public static let https = RecordType(65)
     public static let caa = RecordType(257)
 
     private static let names: [UInt16: String] = [
         1: "A", 2: "NS", 5: "CNAME", 6: "SOA", 12: "PTR", 15: "MX",
-        16: "TXT", 28: "AAAA", 33: "SRV", 257: "CAA",
+        16: "TXT", 28: "AAAA", 33: "SRV", 43: "DS", 48: "DNSKEY", 64: "SVCB", 65: "HTTPS", 257: "CAA",
     ]
 
     public var description: String { Self.names[rawValue] ?? "TYPE\(rawValue)" }
@@ -40,6 +44,10 @@ public enum RecordData: Equatable, Sendable {
     case srv(priority: UInt16, weight: UInt16, port: UInt16, target: String)
     case txt([String])
     case caa(flags: UInt8, tag: String, value: String)
+    /// Also used for HTTPS, which shares the format.
+    case svcb(priority: UInt16, target: String, params: String)
+    case ds(keyTag: UInt16, algorithm: UInt8, digestType: UInt8, digest: [UInt8])
+    case dnskey(flags: UInt16, protocol: UInt8, algorithm: UInt8, key: [UInt8])
     case unknown([UInt8])
 }
 
@@ -91,6 +99,8 @@ public enum MessageError: Error, Equatable {
 public struct Message: Equatable, Sendable {
     public let id: UInt16
     public let isTruncated: Bool
+    /// The AD bit.
+    public var isAuthenticated = false
     public let responseCode: ResponseCode
     public let questionName: String
     public let questionType: RecordType
@@ -100,7 +110,7 @@ public struct Message: Equatable, Sendable {
     public static func query(id: UInt16 = .random(in: 0 ... .max), name: String, type: RecordType) throws -> Data {
         var bytes: [UInt8] = []
         bytes.append16(id)
-        bytes.append16(0x0100) // RD
+        bytes.append16(0x0120) // RD and AD (RFC 6840)
         bytes.append16(1)
         bytes.append16(0)
         bytes.append16(0)
@@ -118,6 +128,7 @@ extension Message {
         id = try r.u16()
         let flags = try r.u16()
         isTruncated = flags & 0x0200 != 0
+        isAuthenticated = flags & 0x0020 != 0
         responseCode = ResponseCode(UInt8(flags & 0x000F))
         let qd = try r.u16(), an = try r.u16(), ns = try r.u16(), ar = try r.u16()
 
@@ -237,10 +248,53 @@ private struct Reader {
             guard pos + tagLength <= end else { throw MessageError.badRecordData(type) }
             let tag = String(decoding: try take(tagLength), as: UTF8.self)
             return .caa(flags: flags, tag: tag, value: String(decoding: try take(end - pos), as: UTF8.self))
+        case .svcb, .https:
+            let priority = try u16(), target = try name()
+            var params: [String] = []
+            while pos < end {
+                let key = try u16(), length = Int(try u16())
+                guard pos + length <= end else { throw MessageError.badRecordData(type) }
+                params.append(svcParam(key, try take(length)))
+            }
+            return .svcb(priority: priority, target: target, params: params.joined(separator: " "))
+        case .ds:
+            return .ds(keyTag: try u16(), algorithm: try u8(), digestType: try u8(), digest: try take(end - pos))
+        case .dnskey:
+            return .dnskey(flags: try u16(), protocol: try u8(), algorithm: try u8(), key: try take(end - pos))
         default:
             return .unknown(try take(end - pos))
         }
     }
+}
+
+/// RFC 9460 presentation form.
+private func svcParam(_ key: UInt16, _ v: [UInt8]) -> String {
+    let names: [UInt16: String] = [0: "mandatory", 1: "alpn", 2: "no-default-alpn", 3: "port", 4: "ipv4hint", 5: "ech", 6: "ipv6hint", 7: "dohpath"]
+    let name = names[key] ?? "key\(key)"
+    func chunks(_ n: Int) -> [[UInt8]] { stride(from: 0, to: v.count, by: n).map { Array(v[$0 ..< $0 + n]) } }
+    let value: String? = switch key {
+    case 0 where v.count % 2 == 0: chunks(2).map { names[UInt16($0[0]) << 8 | UInt16($0[1])] ?? "key\(UInt16($0[0]) << 8 | UInt16($0[1]))" }.joined(separator: ",")
+    case 1: alpnIDs(v)?.joined(separator: ",")
+    case 2 where v.isEmpty: nil
+    case 3 where v.count == 2: String(UInt16(v[0]) << 8 | UInt16(v[1]))
+    case 4 where v.count % 4 == 0 && !v.isEmpty: chunks(4).map { $0.map(String.init).joined(separator: ".") }.joined(separator: ",")
+    case 5: "(\(v.count) bytes)"
+    case 6 where v.count % 16 == 0 && !v.isEmpty: chunks(16).map(ipv6String).joined(separator: ",")
+    case 7: String(decoding: v, as: UTF8.self)
+    default: v.map { String(format: "%02x", $0) }.joined()
+    }
+    return value.map { "\(name)=\($0)" } ?? name
+}
+
+private func alpnIDs(_ v: [UInt8]) -> [String]? {
+    var ids: [String] = [], i = 0
+    while i < v.count {
+        let n = Int(v[i])
+        guard i + 1 + n <= v.count else { return nil }
+        ids.append(String(decoding: v[i + 1 ..< i + 1 + n], as: UTF8.self))
+        i += 1 + n
+    }
+    return ids
 }
 
 /// RFC 5952 text form: lowercase, longest run of two or more zero groups collapsed to "::".
