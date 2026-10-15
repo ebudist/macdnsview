@@ -19,11 +19,13 @@ struct ContentView: View {
                         Button("Look Up…") { session.showingSheet = true }
                     }
                 } else if !session.rows.isEmpty, session.visibleRows.isEmpty {
-                    // A leftover search otherwise makes a finished lookup look empty.
+                    // A leftover search or result filter otherwise makes a finished lookup look empty.
                     ContentUnavailableView {
-                        Label("No rows match \u{201C}\(session.search)\u{201D}", systemImage: "magnifyingglass")
+                        Label(session.search.isEmpty ? "No rows with the chosen results" : "No rows match \u{201C}\(session.search)\u{201D}",
+                              systemImage: "magnifyingglass")
                     } actions: {
-                        Button("Clear Search") { session.search = "" }
+                        if !session.search.isEmpty { Button("Clear Search") { session.search = "" } }
+                        if session.outcomes.count < Outcome.allCases.count { Button("Show All Results") { session.outcomes = Set(Outcome.allCases) } }
                     }
                 }
             }
@@ -73,7 +75,7 @@ struct ContentView: View {
     }
 
     private func cell(_ text: String, _ row: Row) -> Text {
-        Text(text).foregroundStyle(row.isFailure ? AnyShapeStyle(.red) : row.error != nil ? AnyShapeStyle(.orange) : AnyShapeStyle(.primary))
+        Text(text).foregroundStyle(row.outcome == .ok ? AnyShapeStyle(.primary) : AnyShapeStyle(row.outcome.color))
     }
 
     private var searchField: some View {
@@ -119,6 +121,24 @@ struct ContentView: View {
         .help("Choose which columns to show")
     }
 
+    private var resultsMenu: some View {
+        let filtered = session.outcomes.count < Outcome.allCases.count
+        return Menu {
+            ForEach(Outcome.allCases, id: \.self) { outcome in
+                Toggle(outcome.rawValue, isOn: Binding {
+                    session.outcomes.contains(outcome)
+                } set: {
+                    if $0 { session.outcomes.insert(outcome) } else { session.outcomes.remove(outcome) }
+                })
+            }
+            Divider()
+            Button("Show All") { session.outcomes = Set(Outcome.allCases) }.disabled(!filtered)
+        } label: {
+            Label("Results", systemImage: filtered ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+        }
+        .help("Show rows by result: OK, NODATA, or failed")
+    }
+
     private var statusLine: some View {
         HStack(spacing: 8) {
             if session.isRunning { ProgressView().controlSize(.small) }
@@ -139,12 +159,12 @@ struct ContentView: View {
 
     private var statusText: Text {
         let rows = session.rows
-        let ok = rows.filter { $0.error == nil }.count, failed = rows.filter(\.isFailure).count
         var parts: [(String, Color?)] = [("\(rows.count) rows", nil)]
-        if ok > 0 { parts.append(("\(ok) ok", .green)) }
-        if rows.count - ok - failed > 0 { parts.append(("\(rows.count - ok - failed) NODATA", .orange)) }
-        if failed > 0 { parts.append(("\(failed) failed", .red)) }
-        if !session.search.isEmpty { parts.append(("\(session.visibleRows.count) shown", nil)) }
+        for outcome in Outcome.allCases {
+            let count = rows.filter { $0.outcome == outcome }.count
+            if count > 0 { parts.append(("\(count) \(outcome == .noData ? outcome.rawValue : outcome.rawValue.lowercased())", outcome.color)) }
+        }
+        if session.isFiltered { parts.append(("\(session.visibleRows.count) shown", nil)) }
         if !session.selection.isEmpty { parts.append(("\(session.selection.count) selected", nil)) }
         if session.isRunning { parts.append(("looking up \(session.targetCount) targets", nil)) }
         if session.wasStopped { parts.append(("stopped after \(Set(rows.map(\.target)).count) of \(session.targetCount) targets", nil)) }
@@ -187,6 +207,7 @@ struct ContentView: View {
             Button { session.showingInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
                 .help("Show every field of the selected row (⌘I)")
         }
+        ToolbarItem { resultsMenu }
         ToolbarItem { columnsMenu }
         ToolbarItem { searchField }
     }

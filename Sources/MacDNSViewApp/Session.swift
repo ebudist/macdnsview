@@ -13,6 +13,7 @@ final class Session {
     var selection = Set<Row.ID>()
     var sortOrder: [KeyPathComparator<Row>] = []
     var search = ""
+    var outcomes = Set(Outcome.allCases)
 
     var targetsText: String { didSet { defaults.set(targetsText, forKey: "targets") } }
     var serverText: String { didSet { defaults.set(serverText, forKey: "server") } }
@@ -81,11 +82,23 @@ final class Session {
 extension Session {
     var visibleRows: [Row] {
         let query = search.trimmingCharacters(in: .whitespaces)
-        let filtered = query.isEmpty ? rows : rows.filter { row in
-            [row.target, row.typeName, row.name, row.address, row.data, row.server].contains { $0.localizedCaseInsensitiveContains(query) }
+        let filtered = rows.filter { row in
+            outcomes.contains(row.outcome) && (query.isEmpty ||
+                [row.target, row.typeName, row.name, row.address, row.data, row.server].contains { $0.localizedCaseInsensitiveContains(query) })
         }
         return sortOrder.isEmpty ? filtered : filtered.sorted(using: sortOrder)
     }
 
     var selectedRows: [Row] { visibleRows.filter { selection.contains($0.id) } }
+    var isFiltered: Bool { !search.isEmpty || outcomes.count < Outcome.allCases.count }
+}
+
+enum Outcome: String, CaseIterable {
+    case ok = "OK", noData = "NODATA", failed = "Failed"
+
+    var color: Color { switch self { case .ok: .green; case .noData: .orange; case .failed: .red } }
+}
+
+extension Row {
+    var outcome: Outcome { error == nil ? .ok : isFailure ? .failed : .noData }
 }
