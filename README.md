@@ -1,6 +1,8 @@
-# MacDNSView
+<p align="center"><img src="assets/AppIcon.png" width="128" alt="MacDNSView app icon"></p>
 
-Look up DNS records for many domains and IP addresses at once, against your system resolver or any DNS server, and export the results. A native macOS app plus a CLI.
+<h1 align="center">MacDNSView</h1>
+
+<p align="center">Look up DNS records for many domains and IP addresses at once, against your system resolver or any DNS server, and export the results. A native macOS app plus a CLI.</p>
 
 ![MacDNSView looking up 20 domains for A records against two servers, filtering to Targets on Cloudflare, and exporting the results as CSV](docs/demo.gif)
 
