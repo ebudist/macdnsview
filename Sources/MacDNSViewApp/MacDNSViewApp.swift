@@ -11,12 +11,14 @@ struct MacDNSViewApp: App {
     var body: some Scene {
         Window("MacDNSView", id: "main") {
             ContentView(session: session)
-                .frame(minWidth: 960, minHeight: 480)
+                .frame(minWidth: 1000, minHeight: 560)
                 .onAppear { if session.targetsText.isEmpty { session.showingSheet = true } }
         }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1280, height: 820)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("Look Up…") { session.showingSheet = true }
+                Button("Look Up…") { session.openLookup() }
                     .keyboardShortcut("k")
                 Button("Refresh") { session.run() }
                     .keyboardShortcut("r")
@@ -26,7 +28,7 @@ struct MacDNSViewApp: App {
                     .disabled(!session.isRunning)
             }
             CommandGroup(replacing: .saveItem) {
-                Button("Export…") { session.showingExport = true }
+                Button("Export…") { session.openExport() }
                     .keyboardShortcut("s")
                     .disabled(session.rows.isEmpty)
             }

@@ -7,72 +7,367 @@ struct ContentView: View {
     @Bindable var session: Session
 
     var body: some View {
-        NavigationSplitView {
-            Sidebar(session: session)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
-        } detail: {
-            switch session.pane {
-            case .results: ResultsView(session: session)
-            case .watch: WatchView(session: session)
-            case .history: HistoryView(session: session)
+        ZStack(alignment: .top) {
+            HStack(spacing: 0) {
+                if session.showingSidebar {
+                    Sidebar(session: session)
+                        .frame(width: 216)
+                        .background(Color.sidebar)
+                        .overlay(alignment: .trailing) { Rectangle().fill(.black.opacity(0.55)).frame(width: 1) }
+                }
+                VStack(spacing: 0) {
+                    Header(session: session).zIndex(1)
+                    HStack(spacing: 0) {
+                        Group {
+                            switch session.pane {
+                            case .results: ResultsView(session: session)
+                            case .watch: WatchView(session: session)
+                            case .history: HistoryView(session: session)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        if session.pane == .results, session.showingInspector, !session.rows.isEmpty || session.isRunning {
+                            InspectorView(session: session)
+                                .frame(width: 320)
+                                .background(Color.inspector)
+                                .overlay(alignment: .leading) { Rectangle().fill(Color.white(0.08)).frame(width: 1) }
+                        }
+                    }
+                    .overlay {
+                        if session.popover != nil {
+                            Color.black.opacity(0.001).onTapGesture { session.popover = nil }
+                        }
+                    }
+                }
+            }
+            if session.showingSheet || session.showingExport {
+                Color.black.opacity(0.38)
+                    .onTapGesture { session.closeOverlays() }
+                Group {
+                    if session.showingSheet { TargetsSheet(session: session).frame(width: 640) }
+                    if session.showingExport { ExportSheet(session: session).frame(width: 580) }
+                }
+                .padding(.top, 36)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            if let toast = session.toast {
+                VStack {
+                    Spacer()
+                    Text(toast)
+                        .font(.ui(12.5))
+                        .foregroundStyle(Color.white(0.92))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.toast))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white(0.12)))
+                        .shadow(color: .black.opacity(0.5), radius: 15, y: 10)
+                        .padding(.bottom, 44)
+                }
+                .transition(.opacity)
+            }
+            if session.showingSheet || session.showingExport || session.popover != nil {
+                Button("") { session.closeOverlays() }.keyboardShortcut(.cancelAction).hidden()
+            } else if session.pane == .results {
+                Button("") { session.select(offset: 1) }.keyboardShortcut(.downArrow, modifiers: []).hidden()
+                Button("") { session.select(offset: -1) }.keyboardShortcut(.upArrow, modifiers: []).hidden()
             }
         }
-        .sheet(isPresented: $session.showingSheet) { TargetsSheet(session: session) }
-        .sheet(isPresented: $session.showingExport) { ExportSheet(session: session) }
+        .animation(.easeOut(duration: 0.16), value: session.showingSheet || session.showingExport)
+        .animation(.easeOut(duration: 0.15), value: session.toast)
+        .font(.ui(13))
+        .foregroundStyle(Color.t1)
+        .background(Color.window)
+        .ignoresSafeArea()
+        .preferredColorScheme(.dark)
+        .background(WindowChrome())
+        .fileImporter(isPresented: $session.importing, allowedContentTypes: [.plainText, .commaSeparatedText]) { result in
+            if case .success(let url) = result {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                do { try session.load(url) } catch { session.problem = error.localizedDescription }
+            }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let url = urls.first, (try? session.load(url)) != nil else { return false }
+            session.run()
+            return true
+        }
+        .onCopyCommand { [NSItemProvider(object: export(session.selectedRows, as: .tsv) as NSString)] }
     }
-}
 
-private enum SidebarItem: Hashable {
-    case pane(Pane)
-    case list(String)
 }
 
 private struct Sidebar: View {
     @Bindable var session: Session
 
     var body: some View {
-        List(selection: Binding<SidebarItem?> { .pane(session.pane) } set: { item in
-            switch item {
-            case .pane(let pane): session.pane = pane
-            case .list(let name): session.runList(name)
-            case nil: break
-            }
-        }) {
-            SwiftUI.Section("Lookup") {
-                Label("Results", systemImage: "list.bullet")
-                    .badge(session.rows.isEmpty ? 0 : session.rows.count)
-                    .tag(SidebarItem.pane(.results))
-                Label("Watch", systemImage: "waveform.path.ecg")
-                    .badge(session.autoRefresh == 0 ? nil : Text(intervalName(session.autoRefresh)).foregroundStyle(.green))
-                    .tag(SidebarItem.pane(.watch))
-                Label("History", systemImage: "clock.arrow.circlepath")
-                    .tag(SidebarItem.pane(.history))
-            }
-            SwiftUI.Section {
-                ForEach(session.savedLists, id: \.name) { list in
-                    Label(list.name, systemImage: "bookmark")
-                        .badge(Target.parse(list.targets, extractHostFromURL: list.options.extractHostFromURL).count)
-                        .tag(SidebarItem.list(list.name))
-                        .contextMenu {
-                            Button("Rename…") {
-                                if let name = askName("Rename \(list.name) to", initial: list.name, button: "Rename") {
-                                    session.renameList(list.name, to: name)
-                                }
-                            }
-                            Button("Delete", role: .destructive) { session.deleteList(list.name) }
-                        }
+        VStack(alignment: .leading, spacing: 1) {
+            HStack {
+                Spacer()
+                IconButton(symbol: "sidebar.left", color: .white(0.5), size: 14, width: 24, height: 22, help: "Hide sidebar") {
+                    session.showingSidebar = false
                 }
-            } header: {
-                HStack {
-                    Text("Saved Lists")
-                    Spacer()
-                    Button { session.newList() } label: { Image(systemName: "plus") }
-                        .buttonStyle(.borderless)
-                        .help("New list")
+            }
+            .frame(height: 52)
+            .padding(.trailing, 2)
+            heading("Lookup").padding(.top, 4)
+            item("Results", "list.bullet", .results, badge: session.rows.isEmpty ? nil : String(session.rows.count))
+            item("Watch", "waveform.path.ecg", .watch, badge: session.autoRefresh == 0 ? nil : intervalName(session.autoRefresh), live: true)
+            item("History", "clock.arrow.circlepath", .history, badge: nil)
+            HStack {
+                heading("Saved Lists")
+                Spacer()
+                IconButton(symbol: "plus", color: .white(0.5), size: 11, width: 20, height: 20, help: "New list") { session.newList() }
+            }
+            .padding(.top, 12)
+            ScrollView {
+                VStack(spacing: 1) {
+                    ForEach(session.savedLists, id: \.name) { list in savedList(list) }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+    }
+
+    private func heading(_ text: String) -> some View {
+        Text(text).font(.ui(11, .semibold)).foregroundStyle(Color.white(0.35)).padding(.horizontal, 8).padding(.vertical, 4)
+    }
+
+    private func item(_ label: String, _ symbol: String, _ pane: Pane, badge: String?, live: Bool = false) -> some View {
+        let on = session.pane == pane
+        return HoverButton(action: { session.pane = pane; session.popover = nil }, normal: on ? .accent.opacity(0.2) : .clear,
+                           hover: on ? .accent.opacity(0.26) : .white(0.06), radius: 6) {
+            HStack(spacing: 9) {
+                Image(systemName: symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(on ? Color.accentText : .t2).frame(width: 16)
+                Text(label).foregroundStyle(on ? Color.accentText : .t1)
+                Spacer(minLength: 0)
+                if let badge {
+                    Text(badge)
+                        .font(.ui(11, .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(live ? Color.ok : .t2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(live ? Color.ok.opacity(0.2) : .white(0.1)))
+                }
+            }
+            .font(.ui(13))
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+        }
+    }
+
+    private func savedList(_ list: SavedList) -> some View {
+        let on = session.currentList == list.name && session.pane == .results
+        let count = Target.parse(list.targets, extractHostFromURL: list.options.extractHostFromURL).count
+        return HoverButton(action: { session.runList(list.name) }, normal: on ? .white(0.08) : .clear, hover: .white(0.06), radius: 6) {
+            HStack(spacing: 9) {
+                Image(systemName: "bookmark").font(.system(size: 12, weight: .medium)).foregroundStyle(on ? Color.accentText : .t3).frame(width: 16)
+                Text(list.name).lineLimit(1).truncationMode(.tail).foregroundStyle(on ? Color.white : .t1)
+                Spacer(minLength: 0)
+                Text(String(count)).font(.ui(11)).monospacedDigit().foregroundStyle(Color.white(0.35))
+            }
+            .font(.ui(13))
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+        }
+        .contextMenu {
+            Button("Rename…") {
+                if let name = askName("Rename \(list.name) to", initial: list.name, button: "Rename") { session.renameList(list.name, to: name) }
+            }
+            Button("Delete", role: .destructive) { session.deleteList(list.name) }
+        }
+    }
+}
+
+private struct Header: View {
+    @Bindable var session: Session
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if !session.showingSidebar {
+                IconButton(symbol: "sidebar.left", color: .white(0.5), size: 14, width: 24, height: 22, help: "Show sidebar") {
+                    session.showingSidebar = true
+                }
+                .padding(.leading, 70)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.ui(13, .bold)).foregroundStyle(Color.white(0.9))
+                Text(subtitle).font(.ui(11)).foregroundStyle(Color.white(0.5)).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if session.pane == .results { controls }
+        }
+        .padding(.leading, session.showingSidebar ? 20 : 0)
+        .padding(.trailing, 12)
+        .frame(height: 52)
+        .overlay(alignment: .bottom) { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
+        .overlay(alignment: .bottomLeading) {
+            if session.isRunning {
+                GeometryReader { geo in
+                    Rectangle().fill(Color.accent).frame(width: geo.size.width * session.progress, height: 2)
+                        .animation(.linear(duration: 0.1), value: session.progress)
+                }
+                .frame(height: 2)
+                .offset(y: 1)
+            }
+        }
+    }
+
+    private var title: String {
+        switch session.pane {
+        case .results: session.currentList ?? "Results"
+        case .watch: "Watch"
+        case .history: "History"
+        }
+    }
+
+    private var subtitle: String {
+        switch session.pane {
+        case .watch: return "Repeat the lookup on a timer and mark what changed"
+        case .history: return "\(session.history.count) lookups"
+        case .results:
+            guard !session.targetsText.isEmpty else { return "Look up DNS records for many names at once" }
+            let targets = Target.parse(session.targetsText, extractHostFromURL: session.options.extractHostFromURL).count
+            let types = RecordType.lookupOrder.filter(session.options.types.contains).map(\.description) + (session.options.dmarc ? ["DMARC"] : [])
+            let server = session.serverText.trimmingCharacters(in: .whitespaces)
+            return "\(targets) targets · \(types.joined(separator: ", ")) · \(server.isEmpty ? "System resolver" : server)"
+        }
+    }
+
+    private var filtered: Bool { session.outcomes.count < Outcome.allCases.count || session.onlyDiffers || session.cloudflareFilter != .any }
+
+    private var controls: some View {
+        HStack(spacing: 8) {
+            HoverButton(action: session.openLookup, normal: .accent, hover: .accentHover, radius: 7) {
+                HStack(spacing: 6) {
+                    Image(systemName: "globe").font(.system(size: 12, weight: .semibold))
+                    Text("Look Up").font(.ui(13, .medium))
+                }
+                .foregroundStyle(.white)
+                .padding(.leading, 9)
+                .padding(.trailing, 11)
+                .frame(height: 28)
+            }
+            .help("Targets and options (⌘K)")
+            HStack(spacing: 0) {
+                if session.isRunning {
+                    IconButton(symbol: "stop.fill", color: .bad, help: "Stop (⌘.)") { session.stop() }
+                } else {
+                    IconButton(symbol: "arrow.clockwise", help: "Look up the same Targets again (⌘R)") { session.run() }
+                        .disabled(session.targetsText.isEmpty)
+                        .opacity(session.targetsText.isEmpty ? 0.4 : 1)
+                }
+                IconButton(symbol: "timer", color: session.autoRefresh > 0 ? .ok : .white(0.75), on: session.autoRefresh > 0,
+                           onBackground: .ok.opacity(0.14), help: "Auto refresh") { toggle(.autoRefresh) }
+                    .overlay(alignment: .topLeading) {
+                        if session.popover == .autoRefresh { autoRefreshMenu.offset(x: -60, y: 32) }
+                    }
+                IconButton(symbol: "square.and.arrow.up", help: "Export (⌘S)") { session.openExport() }
+                    .disabled(session.rows.isEmpty)
+                    .opacity(session.rows.isEmpty ? 0.4 : 1)
+                IconButton(symbol: "line.3.horizontal.decrease", color: filtered ? .accentText : .white(0.75), on: filtered,
+                           onBackground: .accent.opacity(0.18), help: "Choose which results and columns to show") { toggle(.filter) }
+                    .overlay(alignment: .topTrailing) {
+                        if session.popover == .filter { FilterPanel(session: session).offset(x: 40, y: 32) }
+                    }
+            }
+            .padding(.horizontal, 2)
+            .frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color.white(0.06)))
+            searchField
+            IconButton(symbol: "sidebar.right", color: session.showingInspector ? .white(0.9) : .white(0.6), size: 14, height: 28,
+                       on: session.showingInspector, help: "Inspector (⌘I)") { session.showingInspector.toggle() }
+        }
+    }
+
+    private func toggle(_ popover: Popover) {
+        session.popover = session.popover == popover ? nil : popover
+    }
+
+    private var autoRefreshMenu: some View {
+        Panel {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Auto Refresh").font(.ui(11, .semibold)).foregroundStyle(Color.white(0.4)).padding(.horizontal, 9).padding(.vertical, 5)
+                ForEach(Session.intervals, id: \.seconds) { interval in
+                    MenuItem(label: interval.menu, checked: session.autoRefresh == interval.seconds) {
+                        session.autoRefresh = interval.seconds
+                        session.popover = nil
+                    }
                 }
             }
         }
-        .listStyle(.sidebar)
+        .frame(width: 190)
+        .fixedSize()
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.white(0.45))
+            TextField("Search records", text: $session.search)
+                .textFieldStyle(.plain)
+                .font(.ui(13))
+                .foregroundStyle(Color.white(0.9))
+                .onExitCommand { if !session.closeOverlays() { session.search = "" } }
+            if !session.search.isEmpty {
+                Button { session.search = "" } label: {
+                    Image(systemName: "xmark").font(.system(size: 7, weight: .heavy)).foregroundStyle(Color.window)
+                        .frame(width: 14, height: 14).background(Circle().fill(Color.white(0.25)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(width: 200, height: 28)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white(0.06)))
+    }
+}
+
+private struct FilterPanel: View {
+    @Bindable var session: Session
+
+    var body: some View {
+        Panel(radius: 10, padding: 0) {
+            HStack(alignment: .top, spacing: 18) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Results").font(.ui(12, .bold)).padding(.bottom, 2)
+                    ForEach(Outcome.allCases, id: \.self) { outcome in
+                        Checkbox(label: outcome.rawValue, on: session.outcomes.contains(outcome), dot: outcome.tint) {
+                            if session.outcomes.contains(outcome) { session.outcomes.remove(outcome) } else { session.outcomes.insert(outcome) }
+                        }
+                    }
+                    Checkbox(label: "Gone since the last run", on: session.showRemoved) { session.showRemoved.toggle() }
+                    Rectangle().fill(Color.white(0.1)).frame(height: 1).padding(.vertical, 4)
+                    Checkbox(label: "Only rows where servers differ", on: session.onlyDiffers) { session.onlyDiffers.toggle() }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Columns").font(.ui(12, .bold))
+                        Spacer()
+                        Button("Show All") { session.visibleColumns = Set(ResultsColumn.all.map(\.id)) }
+                            .buttonStyle(.plain)
+                            .font(.ui(12))
+                            .foregroundStyle(Color.accentText)
+                    }
+                    .padding(.bottom, 2)
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10, alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 6) {
+                        ForEach(ResultsColumn.all) { column in
+                            Checkbox(label: column.id == "index" ? "# (row)" : column.label, on: session.visibleColumns.contains(column.id), size: 12.5) {
+                                if session.visibleColumns.contains(column.id) { session.visibleColumns.remove(column.id) } else { session.visibleColumns.insert(column.id) }
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+        }
+        .frame(width: 400)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -92,332 +387,6 @@ func intervalName(_ seconds: Int) -> String { seconds < 60 ? "\(seconds)s" : "\(
     return name.isEmpty ? nil : name
 }
 
-struct ResultsView: View {
-    @Bindable var session: Session
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if !session.rows.isEmpty || session.isRunning { filterBar }
-            table
-                .overlay {
-                    if session.rows.isEmpty, !session.isRunning {
-                        ContentUnavailableView {
-                            Label("No lookups yet", systemImage: "network")
-                        } description: {
-                            Text("Paste domains, IP addresses, or URLs, or drop a text file here.")
-                        } actions: {
-                            Button("Look Up…") { session.showingSheet = true }
-                                .buttonStyle(.borderedProminent)
-                        }
-                    } else if !session.rows.isEmpty, session.visibleRows.isEmpty {
-                        // A leftover search or result filter otherwise makes a finished lookup look empty.
-                        ContentUnavailableView {
-                            Label(session.search.isEmpty ? "No rows with the chosen results" : "No rows match \u{201C}\(session.search)\u{201D}",
-                                  systemImage: "magnifyingglass")
-                        } actions: {
-                            if !session.search.isEmpty { Button("Clear Search") { session.search = "" } }
-                            Button("Show All Results") { session.showAllResults() }
-                        }
-                    }
-                }
-                .overlay(alignment: .top) {
-                    if session.isRunning {
-                        ProgressView(value: session.progress).progressViewStyle(.linear).controlSize(.mini)
-                    }
-                }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) { statusLine }
-        .inspector(isPresented: $session.showingInspector) {
-            InspectorView(session: session).inspectorColumnWidth(min: 260, ideal: 320)
-        }
-        .toolbar { toolbar }
-        .navigationTitle(session.currentList ?? "Results")
-        .navigationSubtitle(subtitle)
-        .dropDestination(for: URL.self) { urls, _ in
-            guard let url = urls.first, (try? session.load(url)) != nil else { return false }
-            session.run()
-            return true
-        }
-        .onCopyCommand { [NSItemProvider(object: export(session.selectedRows, as: .tsv) as NSString)] }
-    }
-
-    private var subtitle: String {
-        guard !session.targetsText.isEmpty else { return "Look up DNS records for many names at once" }
-        let targets = Target.parse(session.targetsText, extractHostFromURL: session.options.extractHostFromURL).count
-        let types = RecordType.lookupOrder.filter(session.options.types.contains).map(\.description) + (session.options.dmarc ? ["DMARC"] : [])
-        let server = session.serverText.trimmingCharacters(in: .whitespaces)
-        return "\(targets) targets · \(types.joined(separator: ", ")) · \(server.isEmpty ? "System resolver" : server)"
-    }
-
-    private var filterBar: some View {
-        let counts = Dictionary(grouping: session.rows, by: \.outcome).mapValues(\.count)
-        let differs = session.rows.filter { $0.differs == true }.count
-        return HStack(spacing: 16) {
-            Picker("Results", selection: Binding<Outcome?> {
-                session.outcomes.count == Outcome.allCases.count ? nil : session.outcomes.count == 1 ? session.outcomes.first : .none
-            } set: {
-                session.outcomes = $0.map { [$0] } ?? Set(Outcome.allCases)
-            }) {
-                Text("All \(session.rows.count)").tag(Outcome?.none)
-                ForEach(Outcome.allCases, id: \.self) { Text("\($0.rawValue) \(counts[$0] ?? 0)").tag(Outcome?.some($0)) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            Toggle(isOn: $session.onlyDiffers) {
-                HStack(spacing: 4) {
-                    Text("Differs")
-                    if differs > 0 { Text(String(differs)).foregroundStyle(.orange).monospacedDigit() }
-                }
-            }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .help("Only rows where servers differ")
-            HStack(spacing: 6) {
-                Image(systemName: "cloud.fill").foregroundStyle(Color.cloudflare)
-                Text("Cloudflare")
-                Picker("Cloudflare", selection: $session.cloudflareFilter) {
-                    ForEach(CloudflareFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-            }
-            .help("Cloudflare: matched against cloudflare.com/ips and *.ns.cloudflare.com")
-            Spacer()
-        }
-        .font(.callout)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
-    private var table: some View {
-        Table(session.tableRows, selection: $session.selection, sortOrder: $session.sortOrder, columnCustomization: $session.columns) {
-            TableColumn("#", value: \.index) { indexCell($0) }
-                .width(min: 40, ideal: 54).customizationID("index")
-            TableColumn("Target", value: \.target) { cell($0.target, $0).fontWeight(.medium) }
-                .width(min: 80, ideal: 160).customizationID("target")
-            TableColumn("Type", value: \.typeName) { cell($0.typeName, $0).monospaced() }
-                .width(min: 50, ideal: 56).customizationID("type")
-            TableColumn("Name", value: \.name) { cell($0.name, $0).monospaced() }
-                .width(min: 80, ideal: 200).customizationID("name")
-            TableColumn("Address", value: \.address) { cell($0.address, $0).monospaced() }
-                .width(min: 60, ideal: 130).customizationID("address")
-            TableColumn("Data", value: \.data) { cell($0.data, $0).monospaced() }
-                .width(min: 80, ideal: 280).customizationID("data")
-            TableColumn("Section", value: \.sectionName) { cell($0.sectionName, $0) }
-                .width(min: 50, ideal: 70).customizationID("section")
-            // The column builder takes at most 10 children.
-            Group {
-                TableColumn("TTL", value: \.ttlSortValue) { cell($0.ttl.map(String.init) ?? "", $0).monospacedDigit() }
-                    .width(min: 44, ideal: 58).customizationID("ttl")
-                TableColumn("Server", value: \.server) { cell($0.server, $0).monospaced() }
-                    .width(min: 60, ideal: 100).customizationID("server")
-                TableColumn("Time", value: \.timeSortValue) { row in
-                    cell(row.time.map { "\($0) ms" } ?? "", row).monospacedDigit()
-                        .foregroundStyle((row.time ?? 0) > 50 ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
-                }
-                .width(min: 50, ideal: 60).customizationID("time")
-                TableColumn("DNSSEC", value: \.validatedName) { row in
-                    if row.validated == true {
-                        Image(systemName: "checkmark").foregroundStyle(.green).fontWeight(.semibold)
-                    } else {
-                        cell(row.validatedName, row).foregroundStyle(.tertiary)
-                    }
-                }
-                .width(min: 50, ideal: 62).customizationID("validated")
-                TableColumn("Differs", value: \.differsName) { row in
-                    Text(row.differs == true ? "yes" : "").foregroundStyle(.orange).fontWeight(.semibold)
-                }
-                .width(min: 44, ideal: 58).customizationID("differs")
-            }
-        }
-        .contextMenu(forSelectionType: Row.ID.self) { ids in
-            if !ids.isEmpty {
-                Button("Copy") { copy(session.visibleRows.filter { ids.contains($0.id) }) }
-            }
-        }
-    }
-
-    private func copy(_ rows: [Row]) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(export(rows, as: .tsv), forType: .string)
-    }
-
-    private func cell(_ text: String, _ row: Row) -> Text {
-        if session.removed.contains(where: { $0.id == row.id }) { return Text(text).strikethrough().foregroundStyle(.secondary) }
-        return Text(text).foregroundStyle(row.outcome == .ok ? AnyShapeStyle(.primary) : AnyShapeStyle(row.outcome.color))
-    }
-
-    private func indexCell(_ row: Row) -> some View {
-        HStack(spacing: 4) {
-            Text(String(row.index)).monospacedDigit().foregroundStyle(.tertiary)
-            if session.changed.contains(row.id) {
-                Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(.blue).help("New or changed since the last run")
-            } else if session.removed.contains(where: { $0.id == row.id }) {
-                Image(systemName: "minus.circle.fill").font(.system(size: 9)).foregroundStyle(.secondary).help("Gone since the last run")
-            }
-            switch Cloudflare.match(row) {
-            case .range(let cidr): Image(systemName: "cloud.fill").foregroundStyle(Color.cloudflare).help("Cloudflare IP range \(cidr)")
-            case .nameserver: Image(systemName: "cloud.fill").foregroundStyle(Color.cloudflare).help("Cloudflare nameserver")
-            case nil: EmptyView()
-            }
-        }
-    }
-
-    private var searchField: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Search records", text: $session.search)
-                .textFieldStyle(.plain)
-                .onExitCommand { session.search = "" }
-            if !session.search.isEmpty {
-                Button { session.search = "" } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Clear the search")
-            }
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
-        .frame(width: 200)
-    }
-
-    private static let columnNames = [("# (row)", "index"), ("Target", "target"), ("Type", "type"), ("Name", "name"), ("Address", "address"),
-                                      ("Data", "data"), ("Section", "section"), ("TTL", "ttl"), ("Server", "server"), ("Time", "time"), ("DNSSEC", "validated"), ("Differs", "differs")]
-
-    private var filterMenu: some View {
-        Button { session.showingFilter.toggle() } label: {
-            Label("Filter", systemImage: session.isFiltered || !session.showRemoved ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-        }
-        .help("Choose which results and columns to show")
-        .popover(isPresented: $session.showingFilter, arrowEdge: .bottom) {
-            HStack(alignment: .top, spacing: 24) {
-                checklist("Results", Outcome.allCases.map { outcome in
-                    (outcome.rawValue, Binding { session.outcomes.contains(outcome) } set: {
-                        if $0 { session.outcomes.insert(outcome) } else { session.outcomes.remove(outcome) }
-                    })
-                } + [("Gone since the last run", $session.showRemoved), ("Only rows where servers differ", $session.onlyDiffers)])
-                checklist("Columns", Self.columnNames.map { name, id in
-                    (name, Binding { session.columns[visibility: id] != .hidden } set: { session.columns[visibility: id] = $0 ? .visible : .hidden })
-                }, columns: 2)
-            }
-            .padding(14)
-        }
-    }
-
-    private func checklist(_ title: String, _ items: [(String, Binding<Bool>)], columns: Int = 1) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(title).font(.headline)
-                Spacer()
-                if columns > 1 {
-                    Button("Show All") { for item in items { item.1.wrappedValue = true } }
-                        .buttonStyle(.link)
-                        .disabled(items.allSatisfy { $0.1.wrappedValue })
-                }
-            }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: columns), alignment: .leading, spacing: 6) {
-                ForEach(items.indices, id: \.self) { Toggle(items[$0].0, isOn: items[$0].1).toggleStyle(.checkbox) }
-            }
-        }
-        .frame(minWidth: columns > 1 ? 200 : 0)
-    }
-
-    private var statusLine: some View {
-        HStack(spacing: 8) {
-            if session.isRunning { ProgressView().controlSize(.small) }
-            statusText
-            Spacer()
-        }
-        .font(.callout)
-        .lineLimit(1)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(.bar)
-    }
-
-    private var statusText: Text {
-        let rows = session.rows
-        var parts: [(String, Color?)] = [("\(rows.count) rows", nil)]
-        for outcome in Outcome.allCases {
-            let count = rows.filter { $0.outcome == outcome }.count
-            if count > 0 { parts.append(("\(count) \(outcome == .failed ? outcome.rawValue.lowercased() : outcome.rawValue)", outcome.color)) }
-        }
-        if session.isFiltered { parts.append(("\(session.visibleRows.count) shown", nil)) }
-        let cloudflare = session.cloudflareTargets.count
-        if cloudflare > 0 { parts.append(("\(cloudflare) target\(cloudflare == 1 ? "" : "s") on Cloudflare", .cloudflare)) }
-        if !session.selection.isEmpty { parts.append(("\(session.selection.count) selected", nil)) }
-        if session.isRunning { parts.append(("looking up \(session.targetCount) targets", .blue)) }
-        if !session.changed.isEmpty || !session.removed.isEmpty {
-            parts.append(("\(session.changed.count) changed, \(session.removed.count) removed since the last run", .blue))
-        }
-        if session.autoRefresh > 0, let finished = session.finishedAt {
-            parts.append(("updated \(finished.formatted(date: .omitted, time: .standard))", nil))
-        }
-        if session.wasStopped { parts.append(("stopped after \(Set(rows.map(\.target)).count) of \(session.targetCount) targets", .orange)) }
-        return parts.enumerated().reduce(Text("")) { text, part in
-            let (i, (string, color)) = part
-            let piece = Text(string).foregroundStyle(color.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
-            return i == 0 ? piece : Text("\(text)\(Text(" · ").foregroundStyle(.tertiary))\(piece)")
-        }
-    }
-
-    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        ToolbarItem {
-            Button { session.showingSheet = true } label: { Label("Look Up", systemImage: "globe") }
-                .labelStyle(.titleAndIcon)
-                .buttonStyle(.borderedProminent)
-                .help("Targets and options (⌘K)")
-        }
-        ToolbarItemGroup {
-            if session.isRunning {
-                Button { session.stop() } label: { Label("Stop", systemImage: "stop.fill") }
-                    .foregroundStyle(.red)
-                    .help("Stop (⌘.)")
-            } else {
-                Button { session.run() } label: { Label("Refresh", systemImage: "arrow.clockwise") }
-                    .help("Look up the same Targets again (⌘R)")
-                    .disabled(session.targetsText.isEmpty)
-            }
-            Menu {
-                Picker("Auto Refresh", selection: $session.autoRefresh) {
-                    ForEach(Session.intervals, id: \.seconds) { Text($0.menu).tag($0.seconds) }
-                }
-                .pickerStyle(.inline)
-            } label: {
-                Label("Auto Refresh", systemImage: session.autoRefresh > 0 ? "timer.circle.fill" : "timer")
-            }
-            .help("Auto refresh")
-            .disabled(session.targetsText.isEmpty)
-            Button { session.showingExport = true } label: { Label("Export", systemImage: "square.and.arrow.up") }
-                .help("Export (⌘S)")
-                .disabled(session.rows.isEmpty)
-            filterMenu
-        }
-        ToolbarItem { searchField }
-        ToolbarItem {
-            Button { session.showingInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
-                .help("Inspector (⌘I)")
-        }
-    }
-}
-
-extension Color {
-    static let cloudflare = Color(red: 0.953, green: 0.502, blue: 0.125)
-}
-
-extension Row {
-    var typeName: String { type.description }
-    var sectionName: String { section?.rawValue ?? "" }
-    var ttlSortValue: Int { ttl.map(Int.init) ?? -1 }
-    var timeSortValue: Int { time ?? -1 }
-    var validatedName: String { validated.map { $0 ? "yes" : "no" } ?? "" }
-    var differsName: String { differs.map { $0 ? "yes" : "no" } ?? "" }
-}
-
-/// @FocusState does not reach views in a macOS toolbar, so Find makes the AppKit field first responder.
 @MainActor func focusSearch() {
     guard let window = NSApp.keyWindow, let root = window.contentView?.superview else { return }
     func find(_ view: NSView) -> NSTextField? {
