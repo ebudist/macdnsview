@@ -11,7 +11,7 @@ struct MacDNSViewApp: App {
     var body: some Scene {
         Window("MacDNSView", id: "main") {
             ContentView(session: session)
-                .frame(minWidth: 720, minHeight: 360)
+                .frame(minWidth: 960, minHeight: 480)
                 .onAppear { if session.targetsText.isEmpty { session.showingSheet = true } }
         }
         .commands {
@@ -26,7 +26,7 @@ struct MacDNSViewApp: App {
                     .disabled(!session.isRunning)
             }
             CommandGroup(replacing: .saveItem) {
-                Button("Export…") { exportRows(session) }
+                Button("Export…") { session.showingExport = true }
                     .keyboardShortcut("s")
                     .disabled(session.rows.isEmpty)
             }
