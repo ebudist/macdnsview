@@ -19,6 +19,7 @@ public enum TransportError: Error, Equatable, CustomStringConvertible {
 }
 
 /// Sends one query to one Server: UDP first, the same query over TCP when the answer comes back truncated.
+/// DoT and DoH Servers get the query over TLS or HTTPS instead.
 public struct Transport: Sendable {
     public var timeout: Duration
     /// Extra UDP attempts after a timeout. A dead UDP server reads as a timeout: Network.framework drops ICMP port unreachable.
@@ -38,14 +39,37 @@ public struct Transport: Sendable {
         }
         for attempt in 0 ... retries {
             do {
-                let udp = try await Exchange.run(query, server: server, tcp: false, timeout: timeout, matches: matches)
-                guard udp.isTruncated else { return udp }
-                return try await Exchange.run(query, server: server, tcp: true, timeout: timeout, matches: matches)
+                switch server.encryption {
+                case .https(let url):
+                    return try await https(query, url: url, matches: matches)
+                case .tls(let name):
+                    return try await Exchange.run(query, server: server, tcp: true, tls: name, timeout: timeout, matches: matches)
+                case .none:
+                    let udp = try await Exchange.run(query, server: server, tcp: false, timeout: timeout, matches: matches)
+                    guard udp.isTruncated else { return udp }
+                    return try await Exchange.run(query, server: server, tcp: true, timeout: timeout, matches: matches)
+                }
             } catch TransportError.timeout where attempt < retries {
                 continue
             }
         }
         throw TransportError.timeout // unreachable: the last attempt rethrows
+    }
+
+    private func https(_ query: Data, url: URL, matches: (Message) -> Bool) async throws -> Message {
+        let (seconds, attoseconds) = timeout.components
+        var request = URLRequest(url: url, timeoutInterval: Double(seconds) + Double(attoseconds) / 1e18)
+        request.httpMethod = "POST"
+        request.setValue("application/dns-message", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/dns-message", forHTTPHeaderField: "Accept")
+        request.httpBody = query
+        let reply: (Data, URLResponse)
+        do { reply = try await URLSession.shared.data(for: request) } catch let error as URLError { throw map(error) }
+        let status = (reply.1 as? HTTPURLResponse)?.statusCode ?? 0
+        guard status == 200 else { throw TransportError.failed("HTTP \(status)") }
+        let message = try Message(decoding: reply.0)
+        guard matches(message) else { throw TransportError.failed("mismatched response") }
+        return message
     }
 }
 
@@ -60,17 +84,23 @@ private final class Exchange: @unchecked Sendable {
     private var continuation: CheckedContinuation<Message, Error>?
     private var finished = false
 
-    private init(_ query: Data, server: Server, tcp: Bool, matches: @escaping @Sendable (Message) -> Bool) {
+    private init(_ query: Data, server: Server, tcp: Bool, tls: String?, matches: @escaping @Sendable (Message) -> Bool) {
         let port = NWEndpoint.Port(rawValue: server.port) ?? 53
-        connection = NWConnection(host: NWEndpoint.Host(server.host), port: port, using: tcp ? .tcp : .udp)
+        var parameters: NWParameters = tcp ? .tcp : .udp
+        if let tls {
+            let options = NWProtocolTLS.Options()
+            sec_protocol_options_set_tls_server_name(options.securityProtocolOptions, tls)
+            parameters = NWParameters(tls: options)
+        }
+        connection = NWConnection(host: NWEndpoint.Host(server.host), port: port, using: parameters)
         self.query = query
         self.tcp = tcp
         self.matches = matches
     }
 
-    static func run(_ query: Data, server: Server, tcp: Bool, timeout: Duration,
+    static func run(_ query: Data, server: Server, tcp: Bool, tls: String? = nil, timeout: Duration,
                     matches: @escaping @Sendable (Message) -> Bool) async throws -> Message {
-        let exchange = Exchange(query, server: server, tcp: tcp, matches: matches)
+        let exchange = Exchange(query, server: server, tcp: tcp, tls: tls, matches: matches)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { exchange.start($0, timeout: timeout) }
         } onCancel: {
@@ -146,6 +176,15 @@ private final class Exchange: @unchecked Sendable {
                 }
             }
         }
+    }
+}
+
+private func map(_ error: URLError) -> TransportError {
+    switch error.code {
+    case .timedOut: .timeout
+    case .notConnectedToInternet, .networkConnectionLost: .networkUnreachable
+    case .cannotConnectToHost: .refused
+    default: .failed(error.localizedDescription)
     }
 }
 

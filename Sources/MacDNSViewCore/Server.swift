@@ -1,19 +1,31 @@
 import Foundation
 import SystemConfiguration
 
-/// A DNS server address. `host` is always an IP literal.
 public struct Server: Hashable, Sendable, CustomStringConvertible {
+    public enum Encryption: Hashable, Sendable {
+        case none
+        case tls(String)
+        case https(URL)
+    }
+
     public let host: String
     public let port: UInt16
+    public let encryption: Encryption
 
-    public init(host: String, port: UInt16 = 53) {
+    public init(host: String, port: UInt16 = 53, encryption: Encryption = .none) {
         self.host = host
         self.port = port
+        self.encryption = encryption
     }
 
     public var description: String {
-        if port == 53 { return host }
-        return host.contains(":") ? "[\(host)]:\(port)" : "\(host):\(port)"
+        switch encryption {
+        case .https(let url): return url.absoluteString
+        case .tls(let name): return "tls://" + (name.contains(":") ? "[\(name)]" : name) + (port == 853 ? "" : ":\(port)")
+        case .none:
+            if port == 53 { return host }
+            return host.contains(":") ? "[\(host)]:\(port)" : "\(host):\(port)"
+        }
     }
 }
 
@@ -24,9 +36,17 @@ public enum ServerError: Error, Equatable {
 
 extension Server {
     /// Parses `1.1.1.1`, `2606:4700::1111`, `host:port`, `[v6]:port`, or a hostname resolved once through the system.
+    /// `https://` URLs are DoH; `tls://` and port 853 are DoT.
     public init(parsing input: String) throws {
         var host = input.trimmingCharacters(in: .whitespaces)
-        var port: UInt16 = 53
+        if host.lowercased().hasPrefix("https://") {
+            guard let url = URL(string: host), let name = url.host() else { throw ServerError.unresolvable(host) }
+            self.init(host: name, port: url.port.flatMap { UInt16(exactly: $0) } ?? 443, encryption: .https(url))
+            return
+        }
+        let tls = host.lowercased().hasPrefix("tls://")
+        if tls { host.removeFirst(6) }
+        var port: UInt16 = tls ? 853 : 53
         if host.hasPrefix("["), let close = host.firstIndex(of: "]") {
             let rest = host[host.index(after: close)...]
             if rest.hasPrefix(":") { port = try Self.port(String(rest.dropFirst())) }
@@ -35,11 +55,12 @@ extension Server {
             port = try Self.port(String(host[host.index(after: colon)...]))
             host = String(host[..<colon])
         }
+        let name = host
         if !isIPLiteral(host) {
             guard let resolved = resolveOnce(host) else { throw ServerError.unresolvable(host) }
             host = resolved
         }
-        self.init(host: host, port: port)
+        self.init(host: host, port: port, encryption: tls || port == 853 ? .tls(name) : .none)
     }
 
     public static func list(parsing input: String) throws -> [Server] {

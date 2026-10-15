@@ -143,6 +143,7 @@ public enum CLI {
       -t, --type LIST        Record types, comma separated (default NS,MX,A,CNAME,SOA,TXT).
                              Available: NS, MX, A, AAAA, CNAME, SOA, SRV, TXT, CAA, HTTPS, SVCB, DS, DNSKEY, DMARC
       -s, --server LIST      DNS servers, comma separated: 1.1.1.1, 2606:4700::1111, host:port, [v6]:port, or a name.
+                             DoH as https://host/path, DoT as tls://host or host:853.
                              With several, every query goes to each and the Differs column marks disagreements.
                              Without it, the system configuration picks one per target, VPN scopes included.
       -F, --format FORMAT    table (default), csv, tsv, json, or html
@@ -167,6 +168,7 @@ public enum CLI {
       macdnsview -t MX,TXT,DMARC -F csv -o mail.csv gmail.com outlook.com
       pbpaste | macdnsview -s 9.9.9.9 -F json | jq '.[] | select(.error)'
       macdnsview -t A -s 1.1.1.1,8.8.8.8 --fail-on-diff www.example.com
+      macdnsview -s https://cloudflare-dns.com/dns-query,tls://1.1.1.1 example.com
 
     """
 }

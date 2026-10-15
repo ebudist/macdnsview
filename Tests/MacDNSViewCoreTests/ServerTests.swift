@@ -84,3 +84,17 @@ func parsesServerInput(_ input: String, _ host: String, _ port: UInt16) throws {
         [Server(host: "1.1.1.1"), Server(host: "8.8.8.8"), Server(host: "2606:4700::1111", port: 5353)])
     #expect(try Server.list(parsing: " ") == [])
 }
+
+@Test func encryptedServerForms() throws {
+    let doh = try Server(parsing: "https://cloudflare-dns.com/dns-query")
+    #expect(doh.host == "cloudflare-dns.com" && doh.port == 443)
+    #expect(doh.encryption == .https(URL(string: "https://cloudflare-dns.com/dns-query")!))
+    #expect(doh.description == "https://cloudflare-dns.com/dns-query")
+
+    let dot = try Server(parsing: "tls://1.1.1.1")
+    #expect(dot.port == 853 && dot.encryption == .tls("1.1.1.1"))
+    #expect(dot.description == "tls://1.1.1.1")
+    #expect(try Server(parsing: "9.9.9.9:853").encryption == .tls("9.9.9.9"))
+    #expect(try Server(parsing: "tls://[2606:4700::1111]:8853").description == "tls://[2606:4700::1111]:8853")
+    #expect(try Server(parsing: "9.9.9.9").encryption == .none)
+}

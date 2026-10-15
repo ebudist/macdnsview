@@ -130,3 +130,11 @@ func realServer() async throws {
     #expect(message.responseCode == .noError)
     #expect(!message.records.isEmpty)
 }
+
+@Test(.enabled(if: ProcessInfo.processInfo.environment["MACDNSVIEW_NET_TESTS"] == "1"),
+      arguments: ["https://cloudflare-dns.com/dns-query", "tls://1.1.1.1"])
+func realEncryptedServer(_ address: String) async throws {
+    let message = try await Transport().query("example.com", type: .a, server: Server(parsing: address))
+    #expect(message.responseCode == .noError)
+    #expect(!message.records.isEmpty)
+}
