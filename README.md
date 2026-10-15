@@ -2,7 +2,7 @@
 
 Look up DNS records for many domains and IP addresses at once, against your system resolver or any DNS server, and export the results. A native macOS app plus a CLI.
 
-![MacDNSView looking up 20 domains for A records and exporting the results as CSV](docs/demo.gif)
+![MacDNSView looking up 20 domains for A records against two servers, filtering to Targets on Cloudflare, and exporting the results as CSV](docs/demo.gif)
 
 Status: early releases. Expect rough edges.
 
