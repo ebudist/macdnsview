@@ -7,8 +7,7 @@ import SwiftUI
 @MainActor @Observable
 final class Session {
     var showingSheet = false
-    var showingInspector = false
-    var showingFilter = false
+    var showingInspector = true
     var showingExport = false
     var exportFormat = ExportFormat.csv
     var exportSelected = false
@@ -20,7 +19,11 @@ final class Session {
     var importing = false
     var problem: String?
     var selection = Set<Row.ID>()
-    var sortOrder: [KeyPathComparator<Row>] = []
+    var sort: SortKey?
+    var popover: Popover?
+    var showingSidebar = true
+    private(set) var toast: String?
+    private var toastTask: Task<Void, Never>?
     var search = ""
     var outcomes = Set(Outcome.allCases)
     var showRemoved = true
@@ -32,7 +35,7 @@ final class Session {
     var targetsText: String { didSet { defaults.set(targetsText, forKey: "targets") } }
     var serverText: String { didSet { defaults.set(serverText, forKey: "server") } }
     var options: LookupOptions { didSet { defaults.set(try? JSONEncoder().encode(options), forKey: "options") } }
-    var columns: TableColumnCustomization<Row> { didSet { defaults.set(try? JSONEncoder().encode(columns), forKey: "columns") } }
+    var visibleColumns: Set<String> { didSet { defaults.set(Array(visibleColumns), forKey: "visibleColumns") } }
     var savedLists: [SavedList] { didSet { defaults.set(try? JSONEncoder().encode(savedLists), forKey: "savedLists") } }
     var currentList: String?
 
@@ -53,7 +56,7 @@ final class Session {
         targetsText = defaults.string(forKey: "targets") ?? ""
         serverText = defaults.string(forKey: "server") ?? ""
         options = defaults.data(forKey: "options").flatMap { try? JSONDecoder().decode(LookupOptions.self, from: $0) } ?? LookupOptions()
-        columns = defaults.data(forKey: "columns").flatMap { try? JSONDecoder().decode(TableColumnCustomization<Row>.self, from: $0) } ?? .init()
+        visibleColumns = defaults.stringArray(forKey: "visibleColumns").map(Set.init) ?? ["index", "target", "type", "data", "ttl", "server", "time", "validated", "differs"]
         savedLists = defaults.data(forKey: "savedLists").flatMap { try? JSONDecoder().decode([SavedList].self, from: $0) } ?? []
         history = defaults.data(forKey: "history").flatMap { try? JSONDecoder().decode([HistoryEntry].self, from: $0) } ?? []
     }
@@ -75,9 +78,53 @@ final class Session {
     static let intervals: [(seconds: Int, menu: String, short: String)] = [(0, "Off", "Off"), (30, "Every 30 seconds", "30 s"), (60, "Every minute", "1 min"),
                                                                                  (300, "Every 5 minutes", "5 min"), (900, "Every 15 minutes", "15 min")]
 
+    func openLookup() {
+        popover = nil
+        problem = nil
+        savingName = nil
+        showingSheet = true
+    }
+
+    func openExport() {
+        popover = nil
+        showingSheet = false
+        showingExport = true
+    }
+
+    @discardableResult func closeOverlays() -> Bool {
+        if popover != nil {
+            popover = nil
+        } else if showingSheet || showingExport {
+            showingSheet = false
+            showingExport = false
+            savingName = nil
+        } else {
+            return false
+        }
+        return true
+    }
+
+    func flash(_ message: String) {
+        toastTask?.cancel()
+        toast = message
+        toastTask = Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            if !Task.isCancelled { toast = nil }
+        }
+    }
+
+    func select(offset: Int) {
+        let rows = visibleRows
+        guard !rows.isEmpty else { return }
+        let current = rows.firstIndex { selection.contains($0.id) } ?? (offset > 0 ? -1 : rows.count)
+        selection = [rows[min(max(current + offset, 0), rows.count - 1)].id]
+    }
+
     func newList() {
         targetsText = ""
         currentList = nil
+        popover = nil
+        problem = nil
         savingName = ""
         showingSheet = true
     }
@@ -219,7 +266,16 @@ extension Session {
                 (cloudflareFilter == .any || (cloudflareFilter == .only) == (cloudflare[row.target] != nil)) && (query.isEmpty ||
                 [row.target, row.typeName, row.name, row.address, row.data, row.server].contains { $0.localizedCaseInsensitiveContains(query) })
         }
-        return sortOrder.isEmpty ? filtered : filtered.sorted(using: sortOrder)
+        guard let sort else { return filtered }
+        return filtered.sorted { a, b in
+            let (x, y) = (a.sortValue(sort.column), b.sortValue(sort.column))
+            let ascending = switch (x, y) {
+            case (.number(let x), .number(let y)): x < y
+            case (.text(let x), .text(let y)): x.localizedStandardCompare(y) == .orderedAscending
+            default: false
+            }
+            return sort.ascending ? ascending : !ascending && x != y
+        }
     }
 
     var tableRows: [Row] { visibleRows + (showRemoved ? removed : []) }
@@ -244,6 +300,37 @@ extension Session {
 }
 
 enum Pane: Hashable { case results, watch, history }
+
+enum Popover { case autoRefresh, filter, lists }
+
+struct SortKey: Equatable {
+    var column: String
+    var ascending: Bool
+}
+
+enum SortValue: Equatable {
+    case number(Int)
+    case text(String)
+}
+
+extension Row {
+    func sortValue(_ column: String) -> SortValue {
+        switch column {
+        case "index": .number(index)
+        case "ttl": .number(ttl.map(Int.init) ?? -1)
+        case "time": .number(time ?? -1)
+        case "target": .text(target)
+        case "type": .text(type.description)
+        case "name": .text(name)
+        case "address": .text(address)
+        case "data": .text(data)
+        case "section": .text(section?.rawValue ?? "")
+        case "server": .text(server)
+        case "validated": .text(validated.map { $0 ? "yes" : "no" } ?? "")
+        default: .text(differs.map { $0 ? "yes" : "no" } ?? "")
+        }
+    }
+}
 
 enum CloudflareFilter: String, CaseIterable { case any = "Any", only = "On", exclude = "Off" }
 
