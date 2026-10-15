@@ -1,3 +1,4 @@
+import AppKit
 import MacDNSViewCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -14,6 +15,7 @@ struct TargetsSheet: View {
             HStack {
                 Text("Targets").font(.headline)
                 Spacer()
+                listsMenu
                 Button("Load from File…") { session.importing = true }
             }
             TextEditor(text: $session.targetsText)
@@ -90,6 +92,48 @@ struct TargetsSheet: View {
                 do { try session.load(url) } catch { session.problem = error.localizedDescription }
             }
         }
+    }
+
+    private var listsMenu: some View {
+        Menu(session.currentList ?? "Saved Lists") {
+            ForEach(session.savedLists, id: \.name) { list in
+                Button(list.name) { session.loadList(list) }
+            }
+            if !session.savedLists.isEmpty { Divider() }
+            Button("Save As…") {
+                if let name = askName("Save the Targets, Server, and options as", initial: session.currentList ?? "", button: "Save") { session.saveList(as: name) }
+            }
+            Menu("Rename") {
+                ForEach(session.savedLists, id: \.name) { list in
+                    Button(list.name) {
+                        if let name = askName("Rename \(list.name) to", initial: list.name, button: "Rename") { session.renameList(list.name, to: name) }
+                    }
+                }
+            }
+            .disabled(session.savedLists.isEmpty)
+            Menu("Delete") {
+                ForEach(session.savedLists, id: \.name) { list in
+                    Button(list.name, role: .destructive) { session.deleteList(list.name) }
+                }
+            }
+            .disabled(session.savedLists.isEmpty)
+        }
+        .fixedSize()
+        .help("Switch between saved Target lists")
+    }
+
+    private func askName(_ message: String, initial: String, button: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = message
+        let field = NSTextField(string: initial)
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : name
     }
 
     private func typeBinding(_ type: RecordType) -> Binding<Bool> {

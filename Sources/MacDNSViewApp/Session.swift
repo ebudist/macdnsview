@@ -22,6 +22,8 @@ final class Session {
     var serverText: String { didSet { defaults.set(serverText, forKey: "server") } }
     var options: LookupOptions { didSet { defaults.set(try? JSONEncoder().encode(options), forKey: "options") } }
     var columns: TableColumnCustomization<Row> { didSet { defaults.set(try? JSONEncoder().encode(columns), forKey: "columns") } }
+    var savedLists: [SavedList] { didSet { defaults.set(try? JSONEncoder().encode(savedLists), forKey: "savedLists") } }
+    var currentList: String?
 
     private(set) var rows: [Row] = []
     private(set) var isRunning = false
@@ -41,6 +43,34 @@ final class Session {
         serverText = defaults.string(forKey: "server") ?? ""
         options = defaults.data(forKey: "options").flatMap { try? JSONDecoder().decode(LookupOptions.self, from: $0) } ?? LookupOptions()
         columns = defaults.data(forKey: "columns").flatMap { try? JSONDecoder().decode(TableColumnCustomization<Row>.self, from: $0) } ?? .init()
+        savedLists = defaults.data(forKey: "savedLists").flatMap { try? JSONDecoder().decode([SavedList].self, from: $0) } ?? []
+    }
+
+    func saveList(as name: String) {
+        savedLists.removeAll { $0.name == name }
+        savedLists.append(SavedList(name: name, targets: targetsText, server: serverText, options: options))
+        savedLists.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        currentList = name
+    }
+
+    func loadList(_ list: SavedList) {
+        targetsText = list.targets
+        serverText = list.server
+        options = list.options
+        currentList = list.name
+    }
+
+    func renameList(_ name: String, to newName: String) {
+        guard let list = savedLists.first(where: { $0.name == name }) else { return }
+        savedLists.removeAll { $0.name == name || $0.name == newName }
+        savedLists.append(SavedList(name: newName, targets: list.targets, server: list.server, options: list.options))
+        savedLists.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        if currentList == name { currentList = newName }
+    }
+
+    func deleteList(_ name: String) {
+        savedLists.removeAll { $0.name == name }
+        if currentList == name { currentList = nil }
     }
 
     /// Checks the Server field; nil means it is usable (empty means the system configuration).
@@ -138,6 +168,13 @@ extension Session {
     var tableRows: [Row] { visibleRows + (showRemoved ? removed : []) }
     var selectedRows: [Row] { visibleRows.filter { selection.contains($0.id) } }
     var isFiltered: Bool { !search.isEmpty || outcomes.count < Outcome.allCases.count }
+}
+
+struct SavedList: Codable {
+    let name: String
+    let targets: String
+    let server: String
+    let options: LookupOptions
 }
 
 enum Outcome: String, CaseIterable {
