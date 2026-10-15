@@ -18,9 +18,17 @@ private final class FakeServer: @unchecked Sendable {
     init(udp: @escaping @Sendable (Data) -> [Data], tcp: @escaping @Sendable (Data) -> Data? = { _ in nil }) async throws {
         self.udp = udp
         self.tcp = tcp
-        let udpListener = try await listen(udp: true, port: .any)
-        port = udpListener.port!.rawValue
-        listeners = [udpListener, try await listen(udp: false, port: udpListener.port!)]
+        for attempt in 1 ... 5 {
+            let udpListener = try await listen(udp: true, port: .any)
+            do {
+                let tcpListener = try await listen(udp: false, port: udpListener.port!)
+                port = udpListener.port!.rawValue
+                listeners = [udpListener, tcpListener]
+                return
+            } catch where attempt < 5 {
+                udpListener.cancel()
+            }
+        }
     }
 
     deinit { listeners.forEach { $0.cancel() } }
