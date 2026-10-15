@@ -21,6 +21,9 @@ struct MacDNSViewApp: App {
                 Button("Refresh") { session.run() }
                     .keyboardShortcut("r")
                     .disabled(session.targetsText.isEmpty)
+                Button("Stop") { session.stop() }
+                    .keyboardShortcut(".")
+                    .disabled(!session.isRunning)
             }
             CommandGroup(replacing: .saveItem) {
                 Button("Export…") { exportRows(session) }

@@ -122,7 +122,13 @@ struct ContentView: View {
     private var statusLine: some View {
         HStack(spacing: 8) {
             if session.isRunning { ProgressView().controlSize(.small) }
-            Text(statusText).foregroundStyle(.secondary)
+            statusText
+            if session.isRunning {
+                Button { session.stop() } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Stop the running lookups (⌘.)")
+            }
             Spacer()
         }
         .font(.callout)
@@ -131,14 +137,22 @@ struct ContentView: View {
         .background(.bar)
     }
 
-    private var statusText: String {
-        let failures = session.rows.filter(\.isFailure).count
-        var parts = ["\(session.rows.count) rows"]
-        if !session.search.isEmpty { parts.append("\(session.visibleRows.count) shown") }
-        if !session.selection.isEmpty { parts.append("\(session.selection.count) selected") }
-        if failures > 0 { parts.append("\(failures) failed") }
-        if session.isRunning { parts.append("looking up \(session.targetCount) targets") }
-        return parts.joined(separator: ", ")
+    private var statusText: Text {
+        let rows = session.rows
+        let ok = rows.filter { $0.error == nil }.count, failed = rows.filter(\.isFailure).count
+        var parts: [(String, Color?)] = [("\(rows.count) rows", nil)]
+        if ok > 0 { parts.append(("\(ok) ok", .green)) }
+        if rows.count - ok - failed > 0 { parts.append(("\(rows.count - ok - failed) NODATA", .orange)) }
+        if failed > 0 { parts.append(("\(failed) failed", .red)) }
+        if !session.search.isEmpty { parts.append(("\(session.visibleRows.count) shown", nil)) }
+        if !session.selection.isEmpty { parts.append(("\(session.selection.count) selected", nil)) }
+        if session.isRunning { parts.append(("looking up \(session.targetCount) targets", nil)) }
+        if session.wasStopped { parts.append(("stopped after \(Set(rows.map(\.target)).count) of \(session.targetCount) targets", nil)) }
+        return parts.enumerated().reduce(Text("")) { text, part in
+            let (i, (string, color)) = part
+            let piece = Text(string).foregroundStyle(color.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
+            return i == 0 ? piece : Text("\(text)\(Text(", ").foregroundStyle(.secondary))\(piece)")
+        }
     }
 
     @ViewBuilder private var inspector: some View {
@@ -161,7 +175,7 @@ struct ContentView: View {
                 .help("Targets and options (⌘K)")
             if session.isRunning {
                 Button { session.stop() } label: { Label("Stop", systemImage: "stop.fill") }
-                    .help("Stop the running lookups")
+                    .help("Stop the running lookups (⌘.)")
             } else {
                 Button { session.run() } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                     .help("Look up the same Targets again (⌘R)")

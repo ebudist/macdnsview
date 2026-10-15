@@ -21,6 +21,7 @@ final class Session {
     private(set) var rows: [Row] = []
     private(set) var isRunning = false
     private(set) var targetCount = 0
+    private(set) var wasStopped = false
     private var task: Task<Void, Never>?
     private let defaults = UserDefaults.standard
 
@@ -46,19 +47,29 @@ final class Session {
         rows = []
         selection = []
         targetCount = targets.count
+        wasStopped = false
         isRunning = !targets.isEmpty
         task = Task {
-            for await row in lookup.stream(targets) { rows.append(row) }
+            for await row in lookup.stream(targets) {
+                guard !Task.isCancelled else { return }
+                rows.append(row)
+            }
             guard !Task.isCancelled else { return }
-            // Arrival order is a race between Servers; settle into the order the CLI prints.
-            rows = Lookup.canonical(rows)
-            selection = [] // indexes changed
-            isRunning = false
+            settle()
         }
     }
 
     func stop() {
+        guard isRunning else { return }
         task?.cancel()
+        wasStopped = true
+        settle()
+    }
+
+    // Arrival order is a race between Servers; settle into the order the CLI prints.
+    private func settle() {
+        rows = Lookup.canonical(rows)
+        selection = [] // indexes changed
         isRunning = false
     }
 
