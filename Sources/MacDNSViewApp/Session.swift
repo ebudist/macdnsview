@@ -9,6 +9,14 @@ final class Session {
     var showingSheet = false
     var showingInspector = false
     var showingFilter = false
+    var showingExport = false
+    var exportFormat = ExportFormat.csv
+    var exportSelected = false
+    var savingName: String?
+    var copiedCommand = false
+    var pane = Pane.results
+    var onlyDiffers = false
+    var cloudflareFilter = CloudflareFilter.any
     var importing = false
     var problem: String?
     var selection = Set<Row.ID>()
@@ -17,6 +25,9 @@ final class Session {
     var outcomes = Set(Outcome.allCases)
     var showRemoved = true
     var autoRefresh = 0 { didSet { scheduleRefresh() } }
+    private(set) var nextRefresh: Date?
+    private(set) var events: [WatchEvent] = []
+    private(set) var history: [HistoryEntry] { didSet { defaults.set(try? JSONEncoder().encode(history), forKey: "history") } }
 
     var targetsText: String { didSet { defaults.set(targetsText, forKey: "targets") } }
     var serverText: String { didSet { defaults.set(serverText, forKey: "server") } }
@@ -44,6 +55,7 @@ final class Session {
         options = defaults.data(forKey: "options").flatMap { try? JSONDecoder().decode(LookupOptions.self, from: $0) } ?? LookupOptions()
         columns = defaults.data(forKey: "columns").flatMap { try? JSONDecoder().decode(TableColumnCustomization<Row>.self, from: $0) } ?? .init()
         savedLists = defaults.data(forKey: "savedLists").flatMap { try? JSONDecoder().decode([SavedList].self, from: $0) } ?? []
+        history = defaults.data(forKey: "history").flatMap { try? JSONDecoder().decode([HistoryEntry].self, from: $0) } ?? []
     }
 
     func saveList(as name: String) {
@@ -58,6 +70,36 @@ final class Session {
         serverText = list.server
         options = list.options
         currentList = list.name
+    }
+
+    static let intervals: [(seconds: Int, menu: String, short: String)] = [(0, "Off", "Off"), (30, "Every 30 seconds", "30 s"), (60, "Every minute", "1 min"),
+                                                                                 (300, "Every 5 minutes", "5 min"), (900, "Every 15 minutes", "15 min")]
+
+    func newList() {
+        targetsText = ""
+        currentList = nil
+        savingName = ""
+        showingSheet = true
+    }
+
+    func showAllResults() {
+        outcomes = Set(Outcome.allCases)
+        onlyDiffers = false
+        cloudflareFilter = .any
+    }
+
+    func runList(_ name: String) {
+        guard let list = savedLists.first(where: { $0.name == name }) else { return }
+        loadList(list)
+        run()
+    }
+
+    func rerun(_ entry: HistoryEntry) {
+        targetsText = entry.targets
+        serverText = entry.server
+        options = entry.options
+        currentList = entry.list
+        run()
     }
 
     func renameList(_ name: String, to newName: String) {
@@ -99,6 +141,7 @@ final class Session {
         targetCount = targets.count
         wasStopped = false
         isRunning = !targets.isEmpty
+        pane = pane == .watch ? .watch : .results
         task = Task {
             for await row in lookup.stream(targets) {
                 guard !Task.isCancelled else { return }
@@ -118,9 +161,11 @@ final class Session {
 
     private func scheduleRefresh() {
         timer?.cancel()
+        nextRefresh = nil
         guard autoRefresh > 0 else { return }
         timer = Task {
             while !Task.isCancelled {
+                nextRefresh = Date() + Double(autoRefresh)
                 try? await Task.sleep(for: .seconds(autoRefresh))
                 if !Task.isCancelled, !isRunning { run() }
             }
@@ -138,6 +183,12 @@ final class Session {
                 return row
             }
         }
+        if autoRefresh > 0, previous?.key == runKey {
+            func line(_ row: Row) -> String {
+                [row.target, row.typeName, row.server, [row.address, row.data, row.error ?? ""].first { !$0.isEmpty } ?? row.name].joined(separator: "  ")
+            }
+            events.insert(WatchEvent(date: Date(), changed: rows.filter { changed.contains($0.id) }.map(line), removed: removed.map(line)), at: 0)
+        }
         previous = (runKey, rows)
         finishedAt = Date()
     }
@@ -148,6 +199,10 @@ final class Session {
         selection = [] // indexes changed
         isRunning = false
         if !wasStopped { compareWithPrevious() }
+        let count = { (outcome: Outcome) in self.rows.filter { $0.outcome == outcome }.count }
+        let entry = HistoryEntry(date: Date(), list: currentList, targets: targetsText, server: serverText, options: options,
+                                 targetCount: targetCount, rows: rows.count, ok: count(.ok), noData: count(.noData), failed: count(.failed))
+        history = Array(([entry] + history).prefix(50))
     }
 
     func load(_ url: URL) throws {
@@ -158,8 +213,10 @@ final class Session {
 extension Session {
     var visibleRows: [Row] {
         let query = search.trimmingCharacters(in: .whitespaces)
+        let cloudflare = cloudflareFilter == .any ? [:] : cloudflareTargets
         let filtered = rows.filter { row in
-            outcomes.contains(row.outcome) && (query.isEmpty ||
+            outcomes.contains(row.outcome) && (!onlyDiffers || row.differs == true) &&
+                (cloudflareFilter == .any || (cloudflareFilter == .only) == (cloudflare[row.target] != nil)) && (query.isEmpty ||
                 [row.target, row.typeName, row.name, row.address, row.data, row.server].contains { $0.localizedCaseInsensitiveContains(query) })
         }
         return sortOrder.isEmpty ? filtered : filtered.sorted(using: sortOrder)
@@ -167,7 +224,48 @@ extension Session {
 
     var tableRows: [Row] { visibleRows + (showRemoved ? removed : []) }
     var selectedRows: [Row] { visibleRows.filter { selection.contains($0.id) } }
-    var isFiltered: Bool { !search.isEmpty || outcomes.count < Outcome.allCases.count }
+    var isFiltered: Bool { !search.isEmpty || outcomes.count < Outcome.allCases.count || onlyDiffers || cloudflareFilter != .any }
+
+    var cloudflareTargets: [String: String] {
+        var via: [String: Set<String>] = [:]
+        for row in rows {
+            switch Cloudflare.match(row) {
+            case .range: via[row.target, default: []].insert("IP")
+            case .nameserver: via[row.target, default: []].insert("NS")
+            case nil: break
+            }
+        }
+        return via.mapValues { $0.sorted().joined(separator: " + ") }
+    }
+
+    var progress: Double {
+        targetCount == 0 ? 0 : Double(Set(rows.map(\.target)).count) / Double(targetCount)
+    }
+}
+
+enum Pane: Hashable { case results, watch, history }
+
+enum CloudflareFilter: String, CaseIterable { case any = "Any", only = "On", exclude = "Off" }
+
+struct WatchEvent: Identifiable {
+    let id = UUID()
+    let date: Date
+    let changed: [String]
+    let removed: [String]
+}
+
+struct HistoryEntry: Codable, Identifiable {
+    var id = UUID()
+    let date: Date
+    let list: String?
+    let targets: String
+    let server: String
+    let options: LookupOptions
+    let targetCount: Int
+    let rows: Int
+    let ok: Int
+    let noData: Int
+    let failed: Int
 }
 
 struct SavedList: Codable {
