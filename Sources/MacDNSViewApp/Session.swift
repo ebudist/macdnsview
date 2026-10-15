@@ -15,6 +15,8 @@ final class Session {
     var sortOrder: [KeyPathComparator<Row>] = []
     var search = ""
     var outcomes = Set(Outcome.allCases)
+    var showRemoved = true
+    var autoRefresh = 0 { didSet { scheduleRefresh() } }
 
     var targetsText: String { didSet { defaults.set(targetsText, forKey: "targets") } }
     var serverText: String { didSet { defaults.set(serverText, forKey: "server") } }
@@ -25,7 +27,13 @@ final class Session {
     private(set) var isRunning = false
     private(set) var targetCount = 0
     private(set) var wasStopped = false
+    private(set) var changed = Set<Row.ID>()
+    private(set) var removed: [Row] = []
+    private(set) var finishedAt: Date?
     private var task: Task<Void, Never>?
+    private var timer: Task<Void, Never>?
+    private var runKey = ""
+    private var previous: (key: String, rows: [Row])?
     private let defaults = UserDefaults.standard
 
     init() {
@@ -55,6 +63,9 @@ final class Session {
         let lookup = Lookup(options: options, servers: (try? Server.list(parsing: serverText)) ?? [])
         rows = []
         selection = []
+        changed = []
+        removed = []
+        runKey = targetsText + "\n" + serverText
         targetCount = targets.count
         wasStopped = false
         isRunning = !targets.isEmpty
@@ -75,11 +86,38 @@ final class Session {
         settle()
     }
 
+    private func scheduleRefresh() {
+        timer?.cancel()
+        guard autoRefresh > 0 else { return }
+        timer = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(autoRefresh))
+                if !Task.isCancelled, !isRunning { run() }
+            }
+        }
+    }
+
+    private func compareWithPrevious() {
+        func key(_ row: Row) -> [String] { [row.target, row.typeName, row.server, row.name, row.address, row.data, row.error ?? ""] }
+        if let previous, previous.key == runKey {
+            let before = Set(previous.rows.map(key)), after = Set(rows.map(key))
+            changed = Set(rows.filter { !before.contains(key($0)) }.map(\.id))
+            removed = previous.rows.filter { !after.contains(key($0)) }.enumerated().map { i, row in
+                var row = row
+                row.index = rows.count + i + 1
+                return row
+            }
+        }
+        previous = (runKey, rows)
+        finishedAt = Date()
+    }
+
     // Arrival order is a race between Servers; settle into the order the CLI prints.
     private func settle() {
         rows = Lookup.canonical(rows)
         selection = [] // indexes changed
         isRunning = false
+        if !wasStopped { compareWithPrevious() }
     }
 
     func load(_ url: URL) throws {
@@ -97,6 +135,7 @@ extension Session {
         return sortOrder.isEmpty ? filtered : filtered.sorted(using: sortOrder)
     }
 
+    var tableRows: [Row] { visibleRows + (showRemoved ? removed : []) }
     var selectedRows: [Row] { visibleRows.filter { selection.contains($0.id) } }
     var isFiltered: Bool { !search.isEmpty || outcomes.count < Outcome.allCases.count }
 }

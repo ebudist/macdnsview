@@ -41,8 +41,8 @@ struct ContentView: View {
     }
 
     private var table: some View {
-        Table(session.visibleRows, selection: $session.selection, sortOrder: $session.sortOrder, columnCustomization: $session.columns) {
-            TableColumn("#", value: \.index) { Text(String($0.index)).monospacedDigit().foregroundStyle(.secondary) }
+        Table(session.tableRows, selection: $session.selection, sortOrder: $session.sortOrder, columnCustomization: $session.columns) {
+            TableColumn("#", value: \.index) { indexCell($0) }
                 .width(min: 30, ideal: 40).customizationID("index")
             TableColumn("Target", value: \.target) { cell($0.target, $0) }
                 .width(min: 80, ideal: 160).customizationID("target")
@@ -83,7 +83,19 @@ struct ContentView: View {
     }
 
     private func cell(_ text: String, _ row: Row) -> Text {
-        Text(text).foregroundStyle(row.outcome == .ok ? AnyShapeStyle(.primary) : AnyShapeStyle(row.outcome.color))
+        if session.removed.contains(where: { $0.id == row.id }) { return Text(text).strikethrough().foregroundStyle(.secondary) }
+        return Text(text).foregroundStyle(row.outcome == .ok ? AnyShapeStyle(.primary) : AnyShapeStyle(row.outcome.color))
+    }
+
+    private func indexCell(_ row: Row) -> some View {
+        HStack(spacing: 4) {
+            Text(String(row.index)).monospacedDigit().foregroundStyle(.secondary)
+            if session.changed.contains(row.id) {
+                Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(.blue).help("New or changed since the last run")
+            } else if session.removed.contains(where: { $0.id == row.id }) {
+                Image(systemName: "minus.circle.fill").font(.system(size: 9)).foregroundStyle(.secondary).help("Gone since the last run")
+            }
+        }
     }
 
     private var searchField: some View {
@@ -109,7 +121,7 @@ struct ContentView: View {
                                       ("Data", "data"), ("Section", "section"), ("TTL", "ttl"), ("Server", "server"), ("Time", "time"), ("Validated", "validated"), ("Differs", "differs")]
 
     private var filterMenu: some View {
-        let filtered = session.outcomes.count < Outcome.allCases.count
+        let filtered = session.outcomes.count < Outcome.allCases.count || !session.showRemoved
         return Button { session.showingFilter.toggle() } label: {
             Label("Filter", systemImage: filtered ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
         }
@@ -120,7 +132,7 @@ struct ContentView: View {
                     (outcome.rawValue, Binding { session.outcomes.contains(outcome) } set: {
                         if $0 { session.outcomes.insert(outcome) } else { session.outcomes.remove(outcome) }
                     })
-                })
+                } + [("Gone since the last run", $session.showRemoved)])
                 checklist("Columns", Self.columnNames.map { name, id in
                     (name, Binding { session.columns[visibility: id] != .hidden } set: { session.columns[visibility: id] = $0 ? .visible : .hidden })
                 })
@@ -167,6 +179,12 @@ struct ContentView: View {
         if session.isFiltered { parts.append(("\(session.visibleRows.count) shown", nil)) }
         if !session.selection.isEmpty { parts.append(("\(session.selection.count) selected", nil)) }
         if session.isRunning { parts.append(("looking up \(session.targetCount) targets", nil)) }
+        if !session.changed.isEmpty || !session.removed.isEmpty {
+            parts.append(("\(session.changed.count) changed, \(session.removed.count) removed since the last run", nil))
+        }
+        if session.autoRefresh > 0, let finished = session.finishedAt {
+            parts.append(("updated \(finished.formatted(date: .omitted, time: .standard))", nil))
+        }
         if session.wasStopped { parts.append(("stopped after \(Set(rows.map(\.target)).count) of \(session.targetCount) targets", nil)) }
         return parts.enumerated().reduce(Text("")) { text, part in
             let (i, (string, color)) = part
@@ -201,6 +219,20 @@ struct ContentView: View {
                     .help("Look up the same Targets again (⌘R)")
                     .disabled(session.targetsText.isEmpty)
             }
+            Menu {
+                Picker("Auto Refresh", selection: $session.autoRefresh) {
+                    Text("Off").tag(0)
+                    Text("Every 30 seconds").tag(30)
+                    Text("Every minute").tag(60)
+                    Text("Every 5 minutes").tag(300)
+                    Text("Every 15 minutes").tag(900)
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Label("Auto Refresh", systemImage: session.autoRefresh > 0 ? "timer.circle.fill" : "timer")
+            }
+            .help("Repeat the lookup and highlight what changed")
+            .disabled(session.targetsText.isEmpty)
             Button { exportRows(session) } label: { Label("Export", systemImage: "square.and.arrow.up") }
                 .help("Export the selected rows, or all rows (⌘S)")
                 .disabled(session.rows.isEmpty)
