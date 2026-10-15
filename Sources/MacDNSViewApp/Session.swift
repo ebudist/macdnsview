@@ -24,6 +24,7 @@ final class Session {
     var showingSidebar = true
     private(set) var toast: String?
     private var toastTask: Task<Void, Never>?
+    private var beforeNewList: (targets: String, list: String?)?
     var search = ""
     var outcomes = Set(Outcome.allCases)
     var showRemoved = true
@@ -62,6 +63,7 @@ final class Session {
     }
 
     func saveList(as name: String) {
+        beforeNewList = nil
         savedLists.removeAll { $0.name == name }
         savedLists.append(SavedList(name: name, targets: targetsText, server: serverText, options: options))
         savedLists.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -95,6 +97,11 @@ final class Session {
         if popover != nil {
             popover = nil
         } else if showingSheet || showingExport {
+            if showingSheet, let before = beforeNewList {
+                targetsText = before.targets
+                currentList = before.list
+            }
+            beforeNewList = nil
             showingSheet = false
             showingExport = false
             savingName = nil
@@ -121,6 +128,7 @@ final class Session {
     }
 
     func newList() {
+        beforeNewList = (targetsText, currentList)
         targetsText = ""
         currentList = nil
         popover = nil
@@ -177,6 +185,7 @@ final class Session {
     }
 
     func run() {
+        beforeNewList = nil
         task?.cancel()
         let targets = Target.parse(targetsText, extractHostFromURL: options.extractHostFromURL)
         let lookup = Lookup(options: options, servers: (try? Server.list(parsing: serverText)) ?? [])
