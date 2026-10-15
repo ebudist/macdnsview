@@ -123,7 +123,7 @@ struct TargetsSheet: View {
                 }
             }
             Spacer()
-            SecondaryButton(title: "Cancel") { session.showingSheet = false; session.savingName = nil }
+            SecondaryButton(title: "Cancel") { session.popover = nil; session.closeOverlays() }
             PrimaryButton(action: submit) {
                 HStack(spacing: 8) {
                     Text("Look Up")
@@ -261,7 +261,10 @@ struct ExportSheet: View {
         ("Text", .table, "txt", .plainText), ("HTML", .html, "html", .html),
     ]
 
-    private var rows: [Row] { session.exportSelected && !session.selectedRows.isEmpty ? session.selectedRows : session.visibleRows }
+    private var rows: [Row] {
+        (session.exportSelected && !session.selectedRows.isEmpty ? session.selectedRows : session.visibleRows).map { $0.with(data: $0.value) }
+    }
+    private var columns: [Int] { ResultsColumn.all.indices.filter { session.visibleColumns.contains(ResultsColumn.all[$0].id) } }
     private var format: (String, ExportFormat, String, UTType) { Self.formats.first { $0.1 == session.exportFormat } ?? Self.formats[0] }
 
     var body: some View {
@@ -293,7 +296,7 @@ struct ExportSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Preview · first rows").font(.ui(11.5)).foregroundStyle(Color.white(0.45))
                 ScrollView([.horizontal, .vertical]) {
-                    Text(export(Array(rows.prefix(6)), as: session.exportFormat))
+                    Text(export(Array(rows.prefix(6)), as: session.exportFormat, columns: columns))
                         .font(.mono(11.5))
                         .lineSpacing(4)
                         .foregroundStyle(Color.white(0.78))
@@ -307,7 +310,7 @@ struct ExportSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white(0.1)))
             }
         } footer: {
-            Text("\(rows.count) row\(rows.count == 1 ? "" : "s") · all columns").font(.ui(12)).foregroundStyle(Color.white(0.45))
+            Text("\(rows.count) row\(rows.count == 1 ? "" : "s") · visible columns").font(.ui(12)).foregroundStyle(Color.white(0.45))
             Spacer()
             SecondaryButton(title: "Cancel") { session.showingExport = false }
             PrimaryButton(action: save) { Text("Export…") }
@@ -336,11 +339,11 @@ struct ExportSheet: View {
         panel.nameFieldStringValue = "macdnsview.\(format.2)"
         panel.allowedContentTypes = [format.3]
         guard let window = NSApp.keyWindow else { return }
-        let (rows, format) = (rows, session.exportFormat)
+        let (rows, format, columns) = (rows, session.exportFormat, columns)
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
             do {
-                try export(rows, as: format).write(to: url, atomically: true, encoding: .utf8)
+                try export(rows, as: format, columns: columns).write(to: url, atomically: true, encoding: .utf8)
                 session.showingExport = false
                 session.flash("Exported \(rows.count) rows as \(url.lastPathComponent)")
             } catch {

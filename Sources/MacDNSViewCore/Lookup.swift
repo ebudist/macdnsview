@@ -35,7 +35,7 @@ public struct Row: Equatable, Identifiable, Sendable {
     public let type: RecordType
     public let name: String
     public let address: String
-    public let data: String
+    public internal(set) var data: String
     public let section: Section?
     public let ttl: UInt32?
     public let server: String

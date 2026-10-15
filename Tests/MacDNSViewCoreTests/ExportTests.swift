@@ -64,3 +64,11 @@ private let rows = [
     #expect(export([row], as: .table).contains(String(repeating: "x", count: 57) + "...  Answer"))
     #expect(export([row], as: .csv).contains(long))
 }
+
+@Test func exportWritesOnlyTheChosenColumnsInOrder() throws {
+    #expect(export(Array(rows.prefix(1)), as: .csv, columns: [1, 5, 7]) == "Target,Data,TTL\nexample.com,preference 10,300\n")
+    #expect(export(Array(rows.prefix(1)), as: .table, columns: [2, 1]) == "Type  Target\nMX    example.com\n")
+    let parsed = try JSONSerialization.jsonObject(with: Data(export(rows, as: .json, columns: [1, 9]).utf8)) as! [[String: Any]]
+    #expect(Set(parsed[0].keys) == ["target", "time_ms", "error"])
+    #expect(parsed[2]["error"] as? String == "NXDOMAIN")
+}
