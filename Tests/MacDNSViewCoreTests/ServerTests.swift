@@ -78,3 +78,9 @@ func parsesServerInput(_ input: String, _ host: String, _ port: UInt16) throws {
     // Every Mac with a network has a default resolver, CI runners included.
     #expect(!config.defaultServers.isEmpty)
 }
+
+@Test func serverListsSplitOnCommasAndSpaces() throws {
+    #expect(try Server.list(parsing: "1.1.1.1, 8.8.8.8 [2606:4700::1111]:5353") ==
+        [Server(host: "1.1.1.1"), Server(host: "8.8.8.8"), Server(host: "2606:4700::1111", port: 5353)])
+    #expect(try Server.list(parsing: " ") == [])
+}

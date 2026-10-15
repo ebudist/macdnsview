@@ -10,7 +10,7 @@ Status: early releases. Expect rough edges.
 
 - Record types: A, AAAA, CNAME, MX, NS, SOA, SRV, TXT, CAA, HTTPS, SVCB, DS, DNSKEY, DMARC, and PTR for IP addresses.
 - A Validated column with the resolver's DNSSEC result (the AD bit) for every answer.
-- Any DNS server, or the system configuration including VPN scoped servers.
+- Any DNS server, several at once with disagreements marked, or the system configuration including VPN scoped servers.
 - TTL, response section, answering server, and response time on every row.
 - Export to CSV, TSV, JSON, plain text, and HTML.
 - CLI for scripts: `macdnsview example.com 1.1.1.1 --type A,MX --format json`

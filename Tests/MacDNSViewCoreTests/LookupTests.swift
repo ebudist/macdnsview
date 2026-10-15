@@ -39,7 +39,7 @@ private struct FakeDNS: Sendable {
 private func lookup(_ fake: FakeDNS, _ configure: (inout LookupOptions) -> Void = { _ in }) -> Lookup {
     var options = LookupOptions()
     configure(&options)
-    var lookup = Lookup(options: options, server: Server(host: "192.0.2.53"))
+    var lookup = Lookup(options: options, servers: [Server(host: "192.0.2.53")])
     lookup.query = fake.query
     return lookup
 }
@@ -244,4 +244,21 @@ func realLookupThroughSystemConfiguration() async {
     var unserved = Lookup(options: { var o = LookupOptions(); o.types = [.a]; return o }())
     unserved.resolvers = { ResolverConfiguration(defaultServers: []) }
     #expect(await unserved.run(Target.parse("example.com")).map(\.time) == [nil])
+}
+
+@Test func everyServerGetsEveryQueryAndDisagreementsAreMarked() async {
+    var lookup = lookup(FakeDNS()) { $0.types = [.a, .mx] }
+    lookup.servers = [Server(host: "192.0.2.1"), Server(host: "192.0.2.2"), Server(host: "192.0.2.3")]
+    lookup.query = { name, type, server in
+        let ip = server.host == "192.0.2.3" ? "198.51.100.9" : "198.51.100.1"
+        let records = type == .a ? [Record(name: name, type: .a, ttl: server.host == "192.0.2.1" ? 60 : 30, section: .answer, data: .a(ip))] : []
+        return Message(id: 1, isTruncated: false, responseCode: .noError, questionName: name, questionType: type, records: records)
+    }
+    let rows = await lookup.run(Target.parse("example.com"))
+    #expect(rows.map(\.server) == ["192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.1", "192.0.2.2", "192.0.2.3"])
+    #expect(rows.map(\.type) == [.mx, .mx, .mx, .a, .a, .a])
+    #expect(rows.map(\.differs) == [false, false, false, false, false, true])
+
+    lookup.servers = [Server(host: "192.0.2.1")]
+    #expect(await lookup.run(Target.parse("example.com")).allSatisfy { $0.differs == nil })
 }

@@ -27,7 +27,7 @@ struct TargetsSheet: View {
                 }
 
             LabeledContent("Server") {
-                TextField("System configuration", text: $session.serverText)
+                TextField("Leave empty to use local config, or separate servers by commas", text: $session.serverText)
                     .textFieldStyle(.roundedBorder)
             }
             if let problem = session.problem { Text(problem).foregroundStyle(.red).font(.callout) }

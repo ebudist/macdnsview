@@ -66,6 +66,8 @@ struct ContentView: View {
                     .width(min: 50, ideal: 64).customizationID("time")
                 TableColumn("Validated", value: \.validatedName) { cell($0.validatedName, $0) }
                     .width(min: 50, ideal: 64).customizationID("validated")
+                TableColumn("Differs", value: \.differsName) { cell($0.differsName, $0) }
+                    .width(min: 44, ideal: 56).customizationID("differs")
             }
         }
         .contextMenu(forSelectionType: Row.ID.self) { ids in
@@ -104,7 +106,7 @@ struct ContentView: View {
     }
 
     private static let columnNames = [("#", "index"), ("Target", "target"), ("Type", "type"), ("Name", "name"), ("Address", "address"),
-                                      ("Data", "data"), ("Section", "section"), ("TTL", "ttl"), ("Server", "server"), ("Time", "time"), ("Validated", "validated")]
+                                      ("Data", "data"), ("Section", "section"), ("TTL", "ttl"), ("Server", "server"), ("Time", "time"), ("Validated", "validated"), ("Differs", "differs")]
 
     private var filterMenu: some View {
         let filtered = session.outcomes.count < Outcome.allCases.count
@@ -239,6 +241,7 @@ extension Row {
     var ttlSortValue: Int { ttl.map(Int.init) ?? -1 }
     var timeSortValue: Int { time ?? -1 }
     var validatedName: String { validated.map { $0 ? "yes" : "no" } ?? "" }
+    var differsName: String { differs.map { $0 ? "yes" : "no" } ?? "" }
 }
 
 /// @FocusState does not reach views in a macOS toolbar, so Find makes the AppKit field first responder.

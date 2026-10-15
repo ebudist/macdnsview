@@ -42,6 +42,10 @@ extension Server {
         self.init(host: host, port: port)
     }
 
+    public static func list(parsing input: String) throws -> [Server] {
+        try input.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map { try Server(parsing: String($0)) }
+    }
+
     private static func port(_ text: String) throws -> UInt16 {
         guard let port = UInt16(text), port > 0 else { throw ServerError.invalidPort(text) }
         return port

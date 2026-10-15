@@ -5,11 +5,14 @@ public enum ExportFormat: String, CaseIterable, Sendable {
 }
 
 extension Row {
-    public static let columns = ["Index", "Target", "Type", "Name", "Address", "Data", "Section", "TTL", "Server", "Time (ms)", "Validated"]
+    public static let columns = ["Index", "Target", "Type", "Name", "Address", "Data", "Section", "TTL", "Server", "Time (ms)", "Validated", "Differs"]
 
     public var fields: [String] {
-        [String(index), target, type.description, name, address, data, section?.rawValue ?? "", ttl.map(String.init) ?? "", server, time.map(String.init) ?? "", validated.map { $0 ? "yes" : "no" } ?? ""]
+        [String(index), target, type.description, name, address, data, section?.rawValue ?? "", ttl.map(String.init) ?? "", server,
+         time.map(String.init) ?? "", yesNo(validated), yesNo(differs)]
     }
+
+    private func yesNo(_ value: Bool?) -> String { value.map { $0 ? "yes" : "no" } ?? "" }
 }
 
 public func export(_ rows: [Row], as format: ExportFormat) -> String {
@@ -54,6 +57,7 @@ private struct JSONRow: Encodable {
     let error: String?
     let time: Int?
     let validated: Bool?
+    let differs: Bool?
 
     // Keep nulls in the output so every object has the same keys.
     func encode(to encoder: Encoder) throws {
@@ -70,9 +74,10 @@ private struct JSONRow: Encodable {
         try c.encode(error, forKey: .error)
         try c.encode(time, forKey: .time)
         try c.encode(validated, forKey: .validated)
+        try c.encode(differs, forKey: .differs)
     }
 
-    enum CodingKeys: String, CodingKey { case index, target, type, name, address, data, section, ttl, server, error, time = "time_ms", validated }
+    enum CodingKeys: String, CodingKey { case index, target, type, name, address, data, section, ttl, server, error, time = "time_ms", validated, differs }
 }
 
 private func json(_ rows: [Row]) -> String {
@@ -80,7 +85,7 @@ private func json(_ rows: [Row]) -> String {
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     let objects = rows.map {
         JSONRow(index: $0.index, target: $0.target, type: $0.type.description, name: $0.name, address: $0.address,
-                data: $0.data, server: $0.server, section: $0.section?.rawValue, ttl: $0.ttl, error: $0.error, time: $0.time, validated: $0.validated)
+                data: $0.data, server: $0.server, section: $0.section?.rawValue, ttl: $0.ttl, error: $0.error, time: $0.time, validated: $0.validated, differs: $0.differs)
     }
     // Encoding plain strings and integers cannot fail.
     return String(decoding: try! encoder.encode(objects), as: UTF8.self) + "\n"

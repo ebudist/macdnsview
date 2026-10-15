@@ -84,3 +84,15 @@ private func run(_ args: [String], stdin: String? = nil) async -> CLI.Result {
     #expect(result.stdout.isEmpty)
     #expect(try String(contentsOfFile: path, encoding: .utf8).contains("\"address\" : \"192.0.2.1\""))
 }
+
+@Test func failOnDiffExitsOneWhenServersDisagree() async {
+    let query: QueryFunction = { name, type, server in
+        let records = type == .a ? [Record(name: name, type: .a, ttl: 60, section: .answer, data: .a(server.host == "192.0.2.53" ? "192.0.2.1" : "192.0.2.2"))] : []
+        return Message(id: 1, isTruncated: false, responseCode: .noError, questionName: name, questionType: type, records: records)
+    }
+    let args = ["-t", "A", "-s", "192.0.2.53,192.0.2.54", "-F", "csv", "example.com"]
+    #expect(await CLI.run(args, stdin: { nil }) { $0.query = query }.status == 0)
+    let strict = await CLI.run(args + ["--fail-on-diff"], stdin: { nil }) { $0.query = query }
+    #expect(strict.status == 1)
+    #expect(strict.stdout.components(separatedBy: ",no,yes\n").count == 3)
+}

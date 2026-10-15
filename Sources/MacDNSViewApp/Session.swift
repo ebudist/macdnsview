@@ -39,15 +39,20 @@ final class Session {
     func serverProblem() -> String? {
         let text = serverText.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return nil }
-        do { _ = try Server(parsing: text); return nil } catch { return "\(error)" }
+        do { _ = try Server.list(parsing: text); return nil } catch {
+            let reason = switch error as? ServerError {
+            case .invalidPort(let port): "\(port) is not a valid port"
+            case .unresolvable(let host): "\(host) is not an IP address or a host name that resolves"
+            case nil: "\(error)"
+            }
+            return reason + ". Separate servers by commas, such as 1.1.1.1, 8.8.8.8 or 9.9.9.9:53."
+        }
     }
 
     func run() {
         task?.cancel()
         let targets = Target.parse(targetsText, extractHostFromURL: options.extractHostFromURL)
-        let text = serverText.trimmingCharacters(in: .whitespaces)
-        let server = text.isEmpty ? nil : try? Server(parsing: text)
-        let lookup = Lookup(options: options, server: server)
+        let lookup = Lookup(options: options, servers: (try? Server.list(parsing: serverText)) ?? [])
         rows = []
         selection = []
         targetCount = targets.count

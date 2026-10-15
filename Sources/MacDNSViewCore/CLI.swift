@@ -10,6 +10,7 @@ public enum CLI {
         public var format = ExportFormat.table
         public var output: String?
         public var timeout: Double = 3
+        public var failOnDiff = false
         public var help = false
         public var version = false
     }
@@ -69,6 +70,7 @@ public enum CLI {
             case "--no-errors": parsed.options.showErrors = false
             case "--hide-additional": parsed.options.hideAdditional = true
             case "--no-url-extraction": parsed.options.extractHostFromURL = false
+            case "--fail-on-diff": parsed.failOnDiff = true
             default: throw UsageError("unknown option \(arg)")
             }
         }
@@ -109,17 +111,18 @@ public enum CLI {
         let targets = Target.parse(text, extractHostFromURL: parsed.options.extractHostFromURL)
         guard !targets.isEmpty else { return Result(status: 2, stderr: "macdnsview: no targets\nTry 'macdnsview --help'.\n") }
 
-        var server: Server?
+        var servers: [Server] = []
         if let input = parsed.server {
-            do { server = try Server(parsing: input) }
+            do { servers = try Server.list(parsing: input) }
             catch { return Result(status: 2, stderr: "macdnsview: bad server \(input): \(error)\n") }
         }
 
         let transport = Transport(timeout: .milliseconds(Int(parsed.timeout * 1000)))
-        var lookup = Lookup(options: parsed.options, server: server, transport: transport)
+        var lookup = Lookup(options: parsed.options, servers: servers, transport: transport)
         configure(&lookup)
         let rows = await lookup.run(targets)
-        let status: Int32 = rows.contains(where: \.isFailure) ? 1 : 0
+        let disagree = parsed.failOnDiff && rows.contains { $0.differs == true }
+        let status: Int32 = rows.contains(where: \.isFailure) || disagree ? 1 : 0
         let rendered = export(rows, as: parsed.format)
 
         guard let output = parsed.output else { return Result(status: status, stdout: rendered) }
@@ -138,8 +141,9 @@ public enum CLI {
 
     Options:
       -t, --type LIST        Record types, comma separated (default NS,MX,A,CNAME,SOA,TXT).
-                             Available: NS, MX, A, AAAA, CNAME, SOA, SRV, TXT, CAA, DMARC
-      -s, --server ADDR      DNS server: 1.1.1.1, 2606:4700::1111, host:port, [v6]:port, or a name.
+                             Available: NS, MX, A, AAAA, CNAME, SOA, SRV, TXT, CAA, HTTPS, SVCB, DS, DNSKEY, DMARC
+      -s, --server LIST      DNS servers, comma separated: 1.1.1.1, 2606:4700::1111, host:port, [v6]:port, or a name.
+                             With several, every query goes to each and the Differs column marks disagreements.
                              Without it, the system configuration picks one per target, VPN scopes included.
       -F, --format FORMAT    table (default), csv, tsv, json, or html
       -o, --output FILE      Write to FILE instead of standard output
@@ -151,16 +155,18 @@ public enum CLI {
           --no-errors          Leave out rows for failed lookups and empty answers
           --hide-additional    Leave out records from the Additional section
           --no-url-extraction  Treat input with a slash as a name, not a URL
+          --fail-on-diff       Exit 1 when the servers given with --server disagree
       -h, --help             Show this help
           --version          Show the version
 
-    Exit status: 0 when every lookup answered (an empty answer counts), 1 when any failed,
-    2 for a usage or input problem.
+    Exit status: 0 when every lookup answered (an empty answer counts), 1 when any failed
+    or, with --fail-on-diff, when servers disagree, 2 for a usage or input problem.
 
     Examples:
       macdnsview example.com 1.1.1.1
       macdnsview -t MX,TXT,DMARC -F csv -o mail.csv gmail.com outlook.com
       pbpaste | macdnsview -s 9.9.9.9 -F json | jq '.[] | select(.error)'
+      macdnsview -t A -s 1.1.1.1,8.8.8.8 --fail-on-diff www.example.com
 
     """
 }

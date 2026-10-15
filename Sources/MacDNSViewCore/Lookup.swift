@@ -44,7 +44,8 @@ public struct Row: Equatable, Identifiable, Sendable {
     /// Milliseconds, retries included.
     public var time: Int? = nil
     public var validated: Bool? = nil
-    /// Position in canonical order: Target, query, Record.
+    public var differs: Bool? = nil
+    /// Position in canonical order: Target, query, Server, Record.
     let order: [Int]
 
     public var id: Int { index }
@@ -57,15 +58,14 @@ public typealias QueryFunction = @Sendable (_ name: String, _ type: RecordType, 
 
 public struct Lookup: Sendable {
     public var options: LookupOptions
-    /// Nil means the system configuration picks a Server per Target.
-    public var server: Server?
+    public var servers: [Server]
     public var maxConcurrent = 16
     var resolvers: @Sendable () -> ResolverConfiguration = { .system() }
     var query: QueryFunction
 
-    public init(options: LookupOptions = LookupOptions(), server: Server? = nil, transport: Transport = Transport()) {
+    public init(options: LookupOptions = LookupOptions(), servers: [Server] = [], transport: Transport = Transport()) {
         self.options = options
-        self.server = server
+        self.servers = servers
         query = { try await transport.query($0, type: $1, server: $2) }
     }
 
@@ -81,10 +81,28 @@ public struct Lookup: Sendable {
     public static func canonical(_ rows: [Row]) -> [Row] {
         var seen = Set<[String]>()
         var rows = rows.sorted { $0.order.lexicographicallyPrecedes($1.order) }.filter { row in
-            seen.insert([row.target, row.type.description, row.name, row.address, row.data, row.section?.rawValue ?? "", row.error ?? ""]).inserted
+            seen.insert([row.target, row.type.description, row.name, row.address, row.data, row.section?.rawValue ?? "", row.error ?? "", row.server]).inserted
         }
         for i in rows.indices { rows[i].index = i + 1 }
+        markDifferences(&rows)
         return rows
+    }
+
+    private static func markDifferences(_ rows: inout [Row]) {
+        for group in Dictionary(grouping: rows.indices, by: { rows[$0].order.prefix(2) }).values {
+            let byServer = Dictionary(grouping: group, by: { rows[$0].server })
+            guard byServer.count > 1 else { continue }
+            let answers = byServer.mapValues { indices in
+                Set(indices.map { rows[$0] }.filter { $0.section == .answer || $0.error != nil }
+                    .map { [$0.type.description, $0.name, $0.address, $0.data, $0.error ?? ""] })
+            }
+            let counts = Dictionary(answers.values.map { ($0, 1) }, uniquingKeysWith: +)
+            let top = counts.values.max() ?? 0
+            let agreed = counts.filter { $0.value == top }.count == 1 ? counts.first { $0.value == top }?.key : nil
+            for (server, indices) in byServer {
+                for i in indices { rows[i].differs = answers[server] != agreed }
+            }
+        }
     }
 
     /// Rows as answers arrive, indexed in arrival order. Duplicates are left in; `canonical` removes them.
@@ -105,12 +123,21 @@ public struct Lookup: Sendable {
         /// Address being reversed, shown in the Address column of PTR rows.
         let address: String?
         let hop: Int
-        let order: [Int]
+        var order: [Int]
+        var server: Server? = nil
     }
 
     private func execute(_ targets: [Target], emit: (Row) -> Void) async {
-        let config = server == nil ? resolvers() : ResolverConfiguration(defaultServers: [])
-        var pending = targets.indices.flatMap { initialJobs(for: targets[$0], at: $0) }[...]
+        let config = servers.isEmpty ? resolvers() : ResolverConfiguration(defaultServers: [])
+        let choices: [Server?] = servers.isEmpty ? [nil] : servers
+        var pending = targets.indices.flatMap { initialJobs(for: targets[$0], at: $0) }.flatMap { job in
+            choices.enumerated().map { i, server in
+                var job = job
+                job.order.insert(i, at: 2)
+                job.server = server
+                return job
+            }
+        }[...]
         var index = 0
         var running = 0
 
@@ -118,7 +145,7 @@ public struct Lookup: Sendable {
             func startNext() {
                 guard let job = pending.popFirst() else { return }
                 running += 1
-                let server = self.server ?? config.servers(for: job.name).first
+                let server = job.server ?? config.servers(for: job.name).first
                 group.addTask {
                     guard let server else { return (job, nil, .failure(LookupError.noServer), nil) }
                     let start = ContinuousClock.now
@@ -198,10 +225,10 @@ public struct Lookup: Sendable {
             switch record.data {
             case .a(let ip) where options.ptrForEveryAddress, .aaaa(let ip) where options.ptrForEveryAddress:
                 if let reverse = Target.parse(ip).first, reverse.kind != .name {
-                    followUps.append(Job(target: job.target, name: reverse.queryName, type: .ptr, address: ip, hop: 1, order: next))
+                    followUps.append(Job(target: job.target, name: reverse.queryName, type: .ptr, address: ip, hop: 1, order: next, server: job.server))
                 }
             case .ptr(let host) where options.aForEveryPTRHost:
-                followUps.append(Job(target: job.target, name: host, type: .a, address: nil, hop: 1, order: next))
+                followUps.append(Job(target: job.target, name: host, type: .a, address: nil, hop: 1, order: next, server: job.server))
             default:
                 break
             }

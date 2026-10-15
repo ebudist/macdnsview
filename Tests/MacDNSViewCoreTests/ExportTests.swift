@@ -13,24 +13,24 @@ private let rows = [
 
 @Test func csvQuotesOnlyWhatNeedsIt() {
     #expect(export(rows, as: .csv) == """
-    Index,Target,Type,Name,Address,Data,Section,TTL,Server,Time (ms),Validated
-    1,example.com,MX,mail.example.com,,preference 10,Answer,300,1.1.1.1,12,yes
-    2,example.com,TXT,example.com,,"say ""hi"", then\tgo",Answer,60,1.1.1.1,,
-    3,nope.invalid,A,nope.invalid,,NXDOMAIN,,,1.1.1.1,,
+    Index,Target,Type,Name,Address,Data,Section,TTL,Server,Time (ms),Validated,Differs
+    1,example.com,MX,mail.example.com,,preference 10,Answer,300,1.1.1.1,12,yes,
+    2,example.com,TXT,example.com,,"say ""hi"", then\tgo",Answer,60,1.1.1.1,,,
+    3,nope.invalid,A,nope.invalid,,NXDOMAIN,,,1.1.1.1,,,
 
     """)
 }
 
 @Test func tsvFlattensTabs() {
     let lines = export(rows, as: .tsv).split(separator: "\n")
-    #expect(lines[0] == "Index\tTarget\tType\tName\tAddress\tData\tSection\tTTL\tServer\tTime (ms)\tValidated")
-    #expect(lines[2] == "2\texample.com\tTXT\texample.com\t\tsay \"hi\", then go\tAnswer\t60\t1.1.1.1\t\t")
+    #expect(lines[0] == "Index\tTarget\tType\tName\tAddress\tData\tSection\tTTL\tServer\tTime (ms)\tValidated\tDiffers")
+    #expect(lines[2] == "2\texample.com\tTXT\texample.com\t\tsay \"hi\", then go\tAnswer\t60\t1.1.1.1\t\t\t")
 }
 
 @Test func tableAlignsColumns() {
     let lines = export(Array(rows.prefix(1)), as: .table).split(separator: "\n")
     #expect(lines == [
-        "Index  Target       Type  Name              Address  Data           Section  TTL  Server   Time (ms)  Validated",
+        "Index  Target       Type  Name              Address  Data           Section  TTL  Server   Time (ms)  Validated  Differs",
         "1      example.com  MX    mail.example.com           preference 10  Answer   300  1.1.1.1  12         yes",
     ])
 }
@@ -38,7 +38,7 @@ private let rows = [
 @Test func jsonKeepsEveryKeyOnEveryObject() throws {
     let parsed = try JSONSerialization.jsonObject(with: Data(export(rows, as: .json).utf8)) as! [[String: Any]]
     #expect(parsed.count == 3)
-    #expect(Set(parsed[2].keys) == ["index", "target", "type", "name", "address", "data", "section", "ttl", "server", "error", "time_ms", "validated"])
+    #expect(Set(parsed[2].keys) == ["index", "target", "type", "name", "address", "data", "section", "ttl", "server", "error", "time_ms", "validated", "differs"])
     #expect(parsed[2]["error"] as? String == "NXDOMAIN")
     #expect(parsed[2]["ttl"] is NSNull)
     #expect(parsed[0]["ttl"] as? Int == 300)
