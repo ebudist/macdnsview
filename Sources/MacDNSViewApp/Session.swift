@@ -8,6 +8,7 @@ import SwiftUI
 final class Session {
     var showingSheet = false
     var showingInspector = false
+    var showingFilter = false
     var importing = false
     var problem: String?
     var selection = Set<Row.ID>()
@@ -18,6 +19,7 @@ final class Session {
     var targetsText: String { didSet { defaults.set(targetsText, forKey: "targets") } }
     var serverText: String { didSet { defaults.set(serverText, forKey: "server") } }
     var options: LookupOptions { didSet { defaults.set(try? JSONEncoder().encode(options), forKey: "options") } }
+    var columns: TableColumnCustomization<Row> { didSet { defaults.set(try? JSONEncoder().encode(columns), forKey: "columns") } }
 
     private(set) var rows: [Row] = []
     private(set) var isRunning = false
@@ -30,6 +32,7 @@ final class Session {
         targetsText = defaults.string(forKey: "targets") ?? ""
         serverText = defaults.string(forKey: "server") ?? ""
         options = defaults.data(forKey: "options").flatMap { try? JSONDecoder().decode(LookupOptions.self, from: $0) } ?? LookupOptions()
+        columns = defaults.data(forKey: "columns").flatMap { try? JSONDecoder().decode(TableColumnCustomization<Row>.self, from: $0) } ?? .init()
     }
 
     /// Checks the Server field; nil means it is usable (empty means the system configuration).

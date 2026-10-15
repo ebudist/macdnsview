@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @Bindable var session: Session
-    @SceneStorage("columns") private var columns = TableColumnCustomization<Row>()
 
     var body: some View {
         table
@@ -42,7 +41,7 @@ struct ContentView: View {
     }
 
     private var table: some View {
-        Table(session.visibleRows, selection: $session.selection, sortOrder: $session.sortOrder, columnCustomization: $columns) {
+        Table(session.visibleRows, selection: $session.selection, sortOrder: $session.sortOrder, columnCustomization: $session.columns) {
             TableColumn("#", value: \.index) { Text(String($0.index)).monospacedDigit().foregroundStyle(.secondary) }
                 .width(min: 30, ideal: 40).customizationID("index")
             TableColumn("Target", value: \.target) { cell($0.target, $0) }
@@ -107,43 +106,35 @@ struct ContentView: View {
     private static let columnNames = [("#", "index"), ("Target", "target"), ("Type", "type"), ("Name", "name"), ("Address", "address"),
                                       ("Data", "data"), ("Section", "section"), ("TTL", "ttl"), ("Server", "server"), ("Time", "time"), ("Validated", "validated")]
 
-    // Same customization as the header right-click, so both stay in sync and persist.
-    private var columnsMenu: some View {
-        Menu {
-            ForEach(Self.columnNames, id: \.1) { name, id in
-                Toggle(name, isOn: Binding {
-                    columns[visibility: id] != .hidden
-                } set: {
-                    columns[visibility: id] = $0 ? .visible : .hidden
+    private var filterMenu: some View {
+        let filtered = session.outcomes.count < Outcome.allCases.count
+        return Button { session.showingFilter.toggle() } label: {
+            Label("Filter", systemImage: filtered ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+        }
+        .help("Choose which results and columns to show")
+        .popover(isPresented: $session.showingFilter, arrowEdge: .bottom) {
+            HStack(alignment: .top, spacing: 24) {
+                checklist("Results", Outcome.allCases.map { outcome in
+                    (outcome.rawValue, Binding { session.outcomes.contains(outcome) } set: {
+                        if $0 { session.outcomes.insert(outcome) } else { session.outcomes.remove(outcome) }
+                    })
+                })
+                checklist("Columns", Self.columnNames.map { name, id in
+                    (name, Binding { session.columns[visibility: id] != .hidden } set: { session.columns[visibility: id] = $0 ? .visible : .hidden })
                 })
             }
-            Divider()
-            Button("Show All") {
-                for (_, id) in Self.columnNames { columns[visibility: id] = .visible }
-            }
-            .disabled(Self.columnNames.allSatisfy { columns[visibility: $0.1] != .hidden })
-        } label: {
-            Label("Columns", systemImage: "tablecells")
+            .padding(12)
         }
-        .help("Choose which columns to show")
     }
 
-    private var resultsMenu: some View {
-        let filtered = session.outcomes.count < Outcome.allCases.count
-        return Menu {
-            ForEach(Outcome.allCases, id: \.self) { outcome in
-                Toggle(outcome.rawValue, isOn: Binding {
-                    session.outcomes.contains(outcome)
-                } set: {
-                    if $0 { session.outcomes.insert(outcome) } else { session.outcomes.remove(outcome) }
-                })
-            }
+    private func checklist(_ title: String, _ items: [(String, Binding<Bool>)]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.headline)
+            ForEach(items.indices, id: \.self) { Toggle(items[$0].0, isOn: items[$0].1).toggleStyle(.checkbox) }
             Divider()
-            Button("Show All") { session.outcomes = Set(Outcome.allCases) }.disabled(!filtered)
-        } label: {
-            Label("Results", systemImage: filtered ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+            Button("Show All") { for item in items { item.1.wrappedValue = true } }
+                .disabled(items.allSatisfy { $0.1.wrappedValue })
         }
-        .help("Show rows by result: OK, NODATA, or failed")
     }
 
     private var statusLine: some View {
@@ -214,8 +205,7 @@ struct ContentView: View {
             Button { session.showingInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
                 .help("Show every field of the selected row (⌘I)")
         }
-        ToolbarItem { resultsMenu }
-        ToolbarItem { columnsMenu }
+        ToolbarItem { filterMenu }
         ToolbarItem { searchField }
     }
 }
