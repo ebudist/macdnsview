@@ -335,13 +335,17 @@ struct ExportSheet: View {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "macdnsview.\(format.2)"
         panel.allowedContentTypes = [format.3]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try export(rows, as: session.exportFormat).write(to: url, atomically: true, encoding: .utf8)
-            session.showingExport = false
-            session.flash("Exported \(rows.count) rows as \(url.lastPathComponent)")
-        } catch {
-            NSAlert(error: error).runModal()
+        guard let window = NSApp.keyWindow else { return }
+        let (rows, format) = (rows, session.exportFormat)
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try export(rows, as: format).write(to: url, atomically: true, encoding: .utf8)
+                session.showingExport = false
+                session.flash("Exported \(rows.count) rows as \(url.lastPathComponent)")
+            } catch {
+                NSAlert(error: error).runModal()
+            }
         }
     }
 }
