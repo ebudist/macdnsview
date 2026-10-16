@@ -220,14 +220,22 @@ private struct ResultsGrid: View {
         .frame(height: 22)
         .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accent.opacity(0.32) : odd ? .white(0.025) : .clear))
         .contentShape(Rectangle())
-        .onTapGesture { session.selection = [row.id] }
+        .onTapGesture {
+            if NSApp.currentEvent?.clickCount == 2 { showDetails(row) } else { session.selection = [row.id] }
+        }
         .contextMenu {
+            Button("Show Details") { showDetails(row) }
             Button("Copy") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(export([row], as: .tsv), forType: .string)
             }
         }
         .padding(.horizontal, 8)
+    }
+
+    private func showDetails(_ row: Row) {
+        session.selection = [row.id]
+        session.showingInspector = true
     }
 
     @ViewBuilder private func cell(_ column: ResultsColumn, _ row: Row, selected: Bool) -> some View {
