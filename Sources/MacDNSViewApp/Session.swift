@@ -27,7 +27,6 @@ final class Session {
     private var beforeNewList: (targets: String, list: String?)?
     var search = ""
     var outcomes = Set(Outcome.allCases)
-    var showRemoved = true
     var autoRefresh = 0 { didSet { scheduleRefresh() } }
     private(set) var nextRefresh: Date?
     private(set) var events: [WatchEvent] = []
@@ -287,7 +286,6 @@ extension Session {
         }
     }
 
-    var tableRows: [Row] { visibleRows + (showRemoved ? removed : []) }
     var selectedRows: [Row] { visibleRows.filter { selection.contains($0.id) } }
     var isFiltered: Bool { !search.isEmpty || outcomes.count < Outcome.allCases.count || onlyDiffers || cloudflareFilter != .any }
 

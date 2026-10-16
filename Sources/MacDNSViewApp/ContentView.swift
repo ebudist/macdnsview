@@ -338,7 +338,6 @@ private struct FilterPanel: View {
                             if session.outcomes.contains(outcome) { session.outcomes.remove(outcome) } else { session.outcomes.insert(outcome) }
                         }
                     }
-                    Checkbox(label: "Gone since the last run", on: session.showRemoved) { session.showRemoved.toggle() }
                     Rectangle().fill(Color.white(0.1)).frame(height: 1).padding(.vertical, 4)
                     Checkbox(label: "Only rows where servers differ", on: session.onlyDiffers) { session.onlyDiffers.toggle() }
                 }

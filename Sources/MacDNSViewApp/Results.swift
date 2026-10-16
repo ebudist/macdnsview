@@ -164,7 +164,7 @@ private struct ResultsGrid: View {
 
     var body: some View {
         let columns = ResultsColumn.all.filter { session.visibleColumns.contains($0.id) }
-        let rows = session.tableRows
+        let rows = session.visibleRows
         GeometryReader { geo in
             let widths = ResultsColumn.widths(columns, in: geo.size.width - 16)
             ScrollViewReader { proxy in
@@ -207,11 +207,9 @@ private struct ResultsGrid: View {
 
     private func rowView(_ row: Row, odd: Bool, columns: [ResultsColumn], widths: [CGFloat]) -> some View {
         let selected = session.selection.contains(row.id)
-        let removed = session.removed.contains { $0.id == row.id }
         return HStack(spacing: 0) {
             ForEach(Array(columns.enumerated()), id: \.element.id) { i, column in
                 cell(column, row, selected: selected)
-                    .strikethrough(removed)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .padding(.horizontal, 8)
@@ -221,7 +219,6 @@ private struct ResultsGrid: View {
         .font(.ui(12))
         .frame(height: 22)
         .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accent.opacity(0.32) : odd ? .white(0.025) : .clear))
-        .opacity(removed ? 0.5 : 1)
         .contentShape(Rectangle())
         .onTapGesture { session.selection = [row.id] }
         .contextMenu {
