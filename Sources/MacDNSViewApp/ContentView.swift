@@ -118,7 +118,7 @@ private struct Sidebar: View {
             item("Watch", "waveform.path.ecg", .watch, badge: session.autoRefresh == 0 ? nil : intervalName(session.autoRefresh), live: true)
             item("History", "clock.arrow.circlepath", .history, badge: nil)
             heading("Migration").padding(.top, 12)
-            item("DNS Monitor", "arrow.left.arrow.right.circle", .monitor, badge: monitorBadge)
+            item("DNS Monitor", "arrow.left.arrow.right.circle", .monitor, badge: monitorBadge, live: session.monitor.interval > 0)
             ForEach(session.monitor.saved, id: \.name) { saved in savedMonitor(saved) }
             HStack {
                 heading("Saved Lists")
@@ -311,6 +311,30 @@ private struct Header: View {
                     .disabled(monitor.entries.isEmpty)
                     .opacity(monitor.entries.isEmpty ? 0.4 : 1)
                 }
+                IconButton(symbol: "timer", color: monitor.interval > 0 ? .ok : .white(0.75), on: monitor.interval > 0,
+                           onBackground: .ok.opacity(0.14), help: "Watch: check again on a timer") { toggle(.monitorInterval) }
+                    .disabled(monitor.entries.isEmpty)
+                    .opacity(monitor.entries.isEmpty ? 0.4 : 1)
+                    .overlay(alignment: .topTrailing) {
+                        if session.popover == .monitorInterval {
+                            Panel {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text("Watch").font(.ui(11, .semibold)).foregroundStyle(Color.white(0.4)).padding(.horizontal, 9).padding(.vertical, 5)
+                                    ForEach(Session.intervals, id: \.seconds) { interval in
+                                        MenuItem(label: interval.menu, checked: monitor.interval == interval.seconds) {
+                                            monitor.interval = interval.seconds
+                                            session.popover = nil
+                                        }
+                                    }
+                                    Text("Stops by itself once every domain is migrated, proxied, or failed.")
+                                        .font(.ui(11)).foregroundStyle(Color.white(0.4)).padding(.horizontal, 9).padding(.top, 6).padding(.bottom, 4)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .frame(width: 220)
+                            .offset(y: 32)
+                        }
+                    }
             }
             .padding(.horizontal, 2)
             .frame(height: 28)

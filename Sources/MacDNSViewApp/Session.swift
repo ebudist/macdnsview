@@ -80,6 +80,7 @@ final class Session {
         savedLists = defaults.data(forKey: "savedLists").flatMap { try? JSONDecoder().decode([SavedList].self, from: $0) } ?? []
         watchSessions = defaults.data(forKey: "watchSessions").flatMap { try? JSONDecoder().decode([WatchSession].self, from: $0) } ?? []
         history = defaults.data(forKey: "history").flatMap { try? JSONDecoder().decode([HistoryEntry].self, from: $0) } ?? []
+        monitor.flash = { [weak self] in self?.flash($0) }
     }
 
     func saveList(as name: String) {
@@ -456,7 +457,7 @@ extension Session {
 
 enum Pane: Hashable { case results, watch, history, monitor }
 
-enum Popover { case autoRefresh, filter, lists, differsHint, cloudflareHint, rename }
+enum Popover { case autoRefresh, filter, lists, differsHint, cloudflareHint, rename, monitorInterval, monitorLog }
 
 struct SortKey: Equatable {
     var column: String

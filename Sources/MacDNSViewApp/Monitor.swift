@@ -13,6 +13,12 @@ final class Monitor {
     var serverText: String { didSet { defaults.set(serverText, forKey: "monitor.server") } }
     var name: String? { didSet { defaults.set(name, forKey: "monitor.name") } }
     var saved: [SavedMonitor] { didSet { defaults.set(try? JSONEncoder().encode(saved), forKey: "monitor.saved") } }
+    private(set) var events: [MonitorEvent] { didSet { defaults.set(try? JSONEncoder().encode(events), forKey: "monitor.events") } }
+    private(set) var migratedAt: [String: Date] { didSet { defaults.set(try? JSONEncoder().encode(migratedAt), forKey: "monitor.migratedAt") } }
+    var interval = 0 { didSet { schedule() } }
+    private(set) var nextRun: Date?
+    var flash: (String) -> Void = { _ in }
+    private var timer: Task<Void, Never>?
 
     var showingSetup = false
     var showingSavedMenu = false
@@ -36,6 +42,8 @@ final class Monitor {
         serverText = defaults.string(forKey: "monitor.server") ?? Self.defaultServers
         name = defaults.string(forKey: "monitor.name")
         saved = defaults.data(forKey: "monitor.saved").flatMap { try? JSONDecoder().decode([SavedMonitor].self, from: $0) } ?? []
+        events = defaults.data(forKey: "monitor.events").flatMap { try? JSONDecoder().decode([MonitorEvent].self, from: $0) } ?? []
+        migratedAt = defaults.data(forKey: "monitor.migratedAt").flatMap { try? JSONDecoder().decode([String: Date].self, from: $0) } ?? [:]
     }
 
     var entries: [Migration.Entry] { Migration.parse(targetsText) }
@@ -83,11 +91,54 @@ final class Monitor {
             }
             guard !Task.isCancelled else { return }
             rows = Lookup.canonical(rows)
+            let before = Dictionary(checks.map { ($0.target, $0.status) }, uniquingKeysWith: { a, _ in a })
             checks = entries.map { Migration.check($0.target.display, rows: rows, new: $0.expected.isEmpty ? new : Set($0.expected), old: old) }
             lastRun = Date()
             isRunning = false
+            record(before)
         }
     }
+
+    private func record(_ before: [String: MigrationStatus]) {
+        let now = Date()
+        var migrated: [String] = []
+        for check in checks {
+            if check.status == .migrated, migratedAt[check.target] == nil { migratedAt[check.target] = now }
+            if check.status != .migrated { migratedAt[check.target] = nil }
+            guard let previous = before[check.target], previous != check.status else { continue }
+            events.insert(MonitorEvent(date: now, domain: check.target, from: previous, to: check.status), at: 0)
+            if check.status == .migrated { migrated.append(check.target) }
+        }
+        events = Array(events.prefix(500))
+        if !migrated.isEmpty {
+            Notifier.post(migrated.count == 1 ? "\(migrated[0]) points to the new server" : "\(migrated.count) domains point to the new server",
+                          migrated.count == 1 ? "\(count(.migrated)) of \(checks.count) done in \(title)." : migrated.joined(separator: ", "))
+        }
+        let done: Set<MigrationStatus> = [.migrated, .proxied, .failed]
+        if interval > 0, !checks.isEmpty, checks.allSatisfy({ done.contains($0.status) }) {
+            interval = 0
+            let message = "Every domain in \(title) is checked: \(count(.migrated)) migrated" + (count(.proxied) + count(.failed) > 0 ? ", \(count(.proxied)) proxied, \(count(.failed)) failed." : ".")
+            Notifier.post("Migration watch finished", message)
+            flash("Watch stopped: every domain is done")
+        }
+    }
+
+    private func schedule() {
+        timer?.cancel()
+        nextRun = nil
+        guard interval > 0 else { return }
+        Notifier.requestAuthorization()
+        if !isRunning { run() }
+        timer = Task {
+            while !Task.isCancelled {
+                nextRun = Date() + Double(interval)
+                try? await Task.sleep(for: .seconds(interval))
+                if !Task.isCancelled, !isRunning { run() }
+            }
+        }
+    }
+
+    func clearEvents() { events = [] }
 
     func stop() {
         task?.cancel()
@@ -107,8 +158,11 @@ final class Monitor {
         oldText = monitor.old
         serverText = monitor.server
         name = monitor.name
+        interval = 0
         checks = []
         rows = []
+        events = []
+        migratedAt = [:]
         selection = nil
     }
 
@@ -124,6 +178,14 @@ final class Monitor {
         saved.removeAll { $0.name == name }
         if self.name == name { self.name = nil }
     }
+}
+
+struct MonitorEvent: Codable, Identifiable {
+    var id = UUID()
+    let date: Date
+    let domain: String
+    let from: MigrationStatus
+    let to: MigrationStatus
 }
 
 struct SavedMonitor: Codable {
@@ -270,6 +332,18 @@ struct MonitorView: View {
             if monitor.isRunning { Spinner() }
             Text(statusText).foregroundStyle(Color.t2)
             Spacer(minLength: 0)
+            Button { session.popover = session.popover == .monitorLog ? nil : .monitorLog } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "list.bullet.rectangle").font(.system(size: 10))
+                    Text(monitor.events.isEmpty ? "No status changes yet" : "\(monitor.events.count) status change\(monitor.events.count == 1 ? "" : "s")")
+                }
+                .foregroundStyle(monitor.events.isEmpty ? Color.t3 : .accentText)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .overlay(alignment: .bottomTrailing) {
+                if session.popover == .monitorLog { log.offset(y: -24).fixedSize() }
+            }
         }
         .font(.ui(11.5))
         .lineLimit(1)
@@ -279,10 +353,51 @@ struct MonitorView: View {
         .overlay(alignment: .top) { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
     }
 
+    private var log: some View {
+        Panel(radius: 10, padding: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("Status changes").font(.ui(12, .bold))
+                    Spacer()
+                    if !monitor.events.isEmpty {
+                        Button("Clear") { monitor.clearEvents() }.buttonStyle(.plain).font(.ui(12)).foregroundStyle(Color.accentText)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                Rectangle().fill(Color.white(0.08)).frame(height: 1)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if monitor.events.isEmpty {
+                            Text("Each check after the first logs the domains whose status changed.").font(.ui(12)).foregroundStyle(Color.t3).padding(14)
+                        }
+                        ForEach(monitor.events) { event in
+                            HStack(spacing: 8) {
+                                Text(event.date.formatted(date: .omitted, time: .standard)).font(.ui(11.5)).monospacedDigit().foregroundStyle(Color.white(0.45)).frame(width: 64, alignment: .leading)
+                                Text(event.domain).font(.ui(12, .medium)).lineLimit(1)
+                                Spacer(minLength: 6)
+                                Text(event.from.rawValue).font(.ui(11.5)).foregroundStyle(event.from.color)
+                                Image(systemName: "arrow.right").font(.system(size: 9)).foregroundStyle(Color.t3)
+                                Text(event.to.rawValue).font(.ui(11.5, .semibold)).foregroundStyle(event.to.color)
+                            }
+                            .padding(.horizontal, 14)
+                            .frame(height: 26)
+                        }
+                    }
+                }
+                .frame(maxHeight: 260)
+            }
+        }
+        .frame(width: 400)
+    }
+
     private var statusText: String {
         let servers = (try? Server.list(parsing: monitor.serverText))?.count ?? 0
         var parts = ["\(monitor.domainCount) domains", servers == 0 ? "system resolver" : "\(servers) server\(servers == 1 ? "" : "s")"]
         if monitor.isRunning { parts.append("checking") } else if let last = monitor.lastRun { parts.append("checked at \(last.formatted(date: .omitted, time: .standard))") }
+        if monitor.interval > 0, !monitor.isRunning, let next = monitor.nextRun {
+            parts.append("next check at \(next.formatted(date: .omitted, time: .standard))")
+        }
         if monitor.filter != nil { parts.append("\(monitor.visibleChecks.count) shown") }
         return parts.joined(separator: " · ")
     }
@@ -292,7 +407,7 @@ private struct MonitorTable: View {
     let monitor: Monitor
     let session: Session
 
-    private static let columns: [(String, CGFloat?, CGFloat)] = [("Status", 130, 0), ("Domain", nil, 1.1), ("Expected", nil, 0.9), ("Answers by server", nil, 2), ("TTL", 60, 0)]
+    private static let columns: [(String, CGFloat?, CGFloat)] = [("Status", 130, 0), ("Domain", nil, 1.1), ("Expected", nil, 0.9), ("Answers by server", nil, 2), ("TTL", 60, 0), ("Migrated", 92, 0)]
 
     var body: some View {
         GeometryReader { geo in
@@ -300,7 +415,7 @@ private struct MonitorTable: View {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     ForEach(Array(Self.columns.enumerated()), id: \.offset) { i, column in
-                        Text(column.0).padding(.horizontal, 8).frame(width: widths[i], alignment: column.0 == "TTL" ? .trailing : .leading)
+                        Text(column.0).padding(.horizontal, 8).frame(width: widths[i], alignment: column.0 == "TTL" || column.0 == "Migrated" ? .trailing : .leading)
                     }
                 }
                 .font(.ui(11.5, .semibold))
@@ -329,6 +444,9 @@ private struct MonitorTable: View {
             Text(check.expected.joined(separator: ", ")).font(.mono(12)).foregroundStyle(Color.t2).cell(widths[2])
             answers(check).cell(widths[3])
             Text(check.ttl.map(String.init) ?? "").font(.mono(12)).foregroundStyle(Color.t2).cell(widths[4], trailing: true)
+            Text(monitor.migratedAt[check.target].map { $0.formatted(date: .omitted, time: .shortened) } ?? "").font(.ui(12)).foregroundStyle(Color.ok).monospacedDigit()
+                .cell(widths[5], trailing: true)
+                .help(monitor.migratedAt[check.target].map { "First seen migrated \($0.formatted(date: .abbreviated, time: .standard))" } ?? "")
         }
         .font(.ui(12))
         .frame(height: 28)

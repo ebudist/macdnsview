@@ -1,6 +1,7 @@
 import AppKit
 import MacDNSViewCore
 import SwiftUI
+import UserNotifications
 
 @main
 struct MacDNSViewApp: App {
@@ -47,11 +48,16 @@ struct MacDNSViewApp: App {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Run from `swift run` without a bundle, the process starts as a background app with no Dock icon or menu bar.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        if Notifier.available { UNUserNotificationCenter.current().delegate = self }
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -107,5 +113,24 @@ private struct AboutView: View {
         .frame(width: 280)
         .background(Color.sheet)
         .preferredColorScheme(.dark)
+    }
+}
+
+enum Notifier {
+    // UserNotifications crashes in a process without an app bundle, such as `swift run`.
+    static var available: Bool { Bundle.main.bundleURL.pathExtension == "app" }
+
+    static func requestAuthorization() {
+        guard available else { return }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    static func post(_ title: String, _ body: String) {
+        guard available else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 }
