@@ -36,7 +36,7 @@ struct ContentView: View {
                         }
                     }
                     .overlay {
-                        if session.popover != nil {
+                        if let popover = session.popover, !popover.inStatusBar {
                             Color.black.opacity(0.001).onTapGesture { session.popover = nil }
                         }
                     }

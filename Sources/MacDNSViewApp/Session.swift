@@ -489,7 +489,10 @@ extension Session {
 
 enum Pane: Hashable { case results, watch, history, monitor }
 
-enum Popover { case autoRefresh, filter, lists, differsHint, cloudflareHint, rename, monitorInterval, monitorLog, monitorTimeline }
+enum Popover { case autoRefresh, filter, lists, differsHint, cloudflareHint, rename, monitorInterval, monitorLog, monitorTimeline
+
+    var inStatusBar: Bool { self == .monitorLog || self == .monitorTimeline }
+}
 
 struct SortKey: Equatable {
     var column: String

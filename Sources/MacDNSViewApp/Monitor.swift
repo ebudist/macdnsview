@@ -383,6 +383,17 @@ struct MonitorView: View {
                     MonitorTable(monitor: monitor, session: session)
                     statusBar
                 }
+                .overlay(alignment: .bottomTrailing) {
+                    if session.popover?.inStatusBar == true {
+                        ZStack(alignment: .bottomTrailing) {
+                            Color.black.opacity(0.001).onTapGesture { session.popover = nil }
+                            Group { if session.popover == .monitorLog { log } else { timeline } }
+                                .fixedSize()
+                                .padding(.trailing, 10)
+                                .padding(.bottom, 32)
+                        }
+                    }
+                }
                 if let check = monitor.selectedCheck {
                     MonitorDetail(check: check, monitor: monitor, session: session)
                         .frame(width: 320)
@@ -462,9 +473,6 @@ struct MonitorView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .overlay(alignment: .bottomTrailing) {
-                if session.popover == .monitorTimeline { timeline.offset(y: -24).fixedSize() }
-            }
             Button { session.popover = session.popover == .monitorLog ? nil : .monitorLog } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "list.bullet.rectangle").font(.system(size: 10))
@@ -474,9 +482,6 @@ struct MonitorView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .overlay(alignment: .bottomTrailing) {
-                if session.popover == .monitorLog { log.offset(y: -24).fixedSize() }
-            }
         }
         .font(.ui(11.5))
         .lineLimit(1)
