@@ -2,6 +2,7 @@ import AppKit
 import MacDNSViewCore
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor @Observable
 final class Monitor {
@@ -22,6 +23,7 @@ final class Monitor {
 
     var showingSetup = false
     var showingSavedMenu = false
+    var importing = false
     var savingName: String?
     var problem: String?
     var filter: MigrationStatus?
@@ -164,6 +166,24 @@ final class Monitor {
         events = []
         migratedAt = [:]
         selection = nil
+    }
+
+    func newSession() {
+        stop()
+        interval = 0
+        targetsText = ""
+        newText = ""
+        oldText = ""
+        serverText = Self.defaultServers
+        name = nil
+        checks = []
+        rows = []
+        events = []
+        migratedAt = [:]
+        selection = nil
+        filter = nil
+        problem = nil
+        savingName = nil
     }
 
     func rename(_ old: String, to new: String) {
@@ -593,11 +613,15 @@ struct MonitorSheet: View {
     var body: some View {
         SheetPanel {
             HStack(spacing: 8) {
-                Text("DNS Monitor").font(.ui(13, .bold)).frame(maxWidth: .infinity, alignment: .leading)
+                Text("Domains").font(.ui(13, .bold)).frame(maxWidth: .infinity, alignment: .leading)
                 SmallButton(title: "Clear") { monitor.targetsText = ""; monitor.problem = nil }
+                    .help("Empty the domain list")
                     .disabled(monitor.targetsText.isEmpty)
                     .opacity(monitor.targetsText.isEmpty ? 0.5 : 1)
+                SmallButton(title: "New Session") { monitor.newSession() }
+                    .help("Start an unsaved monitor with no domains, no expected IPs, and the public resolvers")
                 savedButton
+                SmallButton(title: "Load from File…") { monitor.importing = true }
             }
             .zIndex(1)
             VStack(alignment: .leading, spacing: 6) {
@@ -620,28 +644,24 @@ struct MonitorSheet: View {
                     .onChange(of: monitor.targetsText) { monitor.problem = nil }
                 Text(hint).font(.ui(11.5)).foregroundStyle(Color.white(0.45))
             }
+            VStack(alignment: .leading, spacing: 8) {
+                field("Server", "Leave empty to use local config, or separate servers by commas", $monitor.serverText)
+                HStack(spacing: 6) { ServerPresets(text: $monitor.serverText) { monitor.problem = nil } }
+                    .padding(.leading, 108)
+            }
             VStack(alignment: .leading, spacing: 10) {
-                field("New server", "IP addresses, separated by commas", $monitor.newText)
+                field("New server", "Expected IP addresses, separated by commas", $monitor.newText)
                 field("Old server", "Optional, to tell old answers from unexpected ones", $monitor.oldText)
-                field("Servers", "Resolvers to ask, separated by commas", $monitor.serverText)
-                HStack(spacing: 6) {
-                    ForEach([("Public resolvers", Monitor.defaultServers), ("System", "")], id: \.0) { label, value in
-                        let on = monitor.serverText.replacingOccurrences(of: " ", with: "") == value.replacingOccurrences(of: " ", with: "")
-                        Button { monitor.serverText = value } label: {
-                            Text(label).font(.ui(11.5)).foregroundStyle(on ? Color.accentText : .t2)
-                                .padding(.horizontal, 9).frame(height: 22)
-                                .background(Capsule().fill(on ? Color.accent.opacity(0.18) : .clear))
-                                .overlay(Capsule().strokeBorder(on ? Color.accent.opacity(0.6) : .white(0.14)))
-                                .contentShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .help(value.isEmpty ? "System configuration, including VPN scoped servers" : value)
-                    }
-                }
-                .padding(.leading, 108)
                 if let problem = monitor.problem {
                     Text(problem).font(.ui(12)).foregroundStyle(Color.problem).padding(.leading, 108)
                 }
+            }
+            HStack(alignment: .center, spacing: 12) {
+                formLabel("Record type")
+                TypeChip(label: "A", on: true) {}
+                    .frame(width: 70)
+                    .allowsHitTesting(false)
+                Text("DNS Monitor compares A records for now.").font(.ui(11.5)).foregroundStyle(Color.white(0.45))
             }
         } footer: {
             if let name = monitor.savingName {
@@ -667,6 +687,7 @@ struct MonitorSheet: View {
             }
             .keyboardShortcut(.return, modifiers: .command)
         }
+        .fileImporter(isPresented: $monitor.importing, allowedContentTypes: [.plainText, .commaSeparatedText], onCompletion: load)
     }
 
     private var hint: String {
@@ -719,6 +740,13 @@ struct MonitorSheet: View {
                 .offset(y: 28)
             }
         }
+    }
+
+    private func load(_ result: Result<URL, Error>) {
+        guard case .success(let url) = result else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do { monitor.targetsText = try String(contentsOf: url, encoding: .utf8) } catch { monitor.problem = error.localizedDescription }
     }
 
     private func start() {

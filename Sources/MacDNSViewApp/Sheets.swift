@@ -31,8 +31,6 @@ func formLabel(_ text: String) -> some View {
 struct TargetsSheet: View {
     @Bindable var session: Session
 
-    private static let presets = [("System", ""), ("1.1.1.1", "1.1.1.1"), ("8.8.8.8", "8.8.8.8"), ("9.9.9.9", "9.9.9.9"),
-                                  ("Cloudflare DoH", "https://cloudflare-dns.com/dns-query"), ("Quad9 DoT", "tls://dns.quad9.net")]
     private static let types: [RecordType] = [.a, .aaaa, .cname, .mx, .ns, .soa, .srv, .txt, .caa, .https, .svcb, .ds, .dnskey]
     private static let followUps: [(String, WritableKeyPath<LookupOptions, Bool>)] = [
         ("Reverse lookup (PTR) when a Target is an IP address", \.reverseLookupAddresses),
@@ -87,7 +85,7 @@ struct TargetsSheet: View {
                         .onChange(of: session.serverText) { session.problem = nil }
                 }
                 HStack(spacing: 6) {
-                    ForEach(Self.presets, id: \.0) { label, value in presetChip(label, value) }
+                    ServerPresets(text: $session.serverText) { session.problem = nil }
                 }
                 .padding(.leading, 108)
                 if let problem = session.problem {
@@ -191,26 +189,6 @@ struct TargetsSheet: View {
         }
     }
 
-    private func presetChip(_ label: String, _ value: String) -> some View {
-        let servers = session.serverText.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
-        let on = value.isEmpty ? servers.isEmpty : servers.contains(value)
-        return Button {
-            session.serverText = value.isEmpty ? "" : (on ? servers.filter { $0 != value } : servers + [value]).joined(separator: ", ")
-            session.problem = nil
-        } label: {
-            Text(label)
-                .font(.ui(11.5))
-                .foregroundStyle(on ? Color.accentText : .t2)
-                .padding(.horizontal, 9)
-                .frame(height: 22)
-                .background(Capsule().fill(on ? Color.accent.opacity(0.18) : .clear))
-                .overlay(Capsule().strokeBorder(on ? Color.accent.opacity(0.6) : .white(0.14)))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .help(value.isEmpty ? "System configuration, including VPN scoped servers" : value)
-    }
-
     private var targetHint: String {
         let targets = Target.parse(session.targetsText, extractHostFromURL: session.options.extractHostFromURL)
         guard !targets.isEmpty else { return "One per line works best. Lines starting with # are ignored." }
@@ -242,6 +220,36 @@ struct TargetsSheet: View {
     }
 }
 
+struct ServerPresets: View {
+    @Binding var text: String
+    let changed: () -> Void
+
+    private static let presets = [("System", ""), ("1.1.1.1", "1.1.1.1"), ("8.8.8.8", "8.8.8.8"), ("9.9.9.9", "9.9.9.9"),
+                                  ("Cloudflare DoH", "https://cloudflare-dns.com/dns-query"), ("Quad9 DoT", "tls://dns.quad9.net")]
+
+    var body: some View {
+        let servers = text.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
+        ForEach(Self.presets, id: \.0) { label, value in
+            let on = value.isEmpty ? servers.isEmpty : servers.contains(value)
+            Button {
+                text = value.isEmpty ? "" : (on ? servers.filter { $0 != value } : servers + [value]).joined(separator: ", ")
+                changed()
+            } label: {
+                Text(label)
+                    .font(.ui(11.5))
+                    .foregroundStyle(on ? Color.accentText : .t2)
+                    .padding(.horizontal, 9)
+                    .frame(height: 22)
+                    .background(Capsule().fill(on ? Color.accent.opacity(0.18) : .clear))
+                    .overlay(Capsule().strokeBorder(on ? Color.accent.opacity(0.6) : .white(0.14)))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help(value.isEmpty ? "System configuration, including VPN scoped servers" : value)
+        }
+    }
+}
+
 struct SmallButton: View {
     let title: String
     let action: () -> Void
@@ -253,7 +261,7 @@ struct SmallButton: View {
     }
 }
 
-private struct TypeChip: View {
+struct TypeChip: View {
     let label: String
     let on: Bool
     let action: () -> Void
