@@ -13,7 +13,7 @@ final class Session {
     var exportFormat = ExportFormat.csv
     var exportSelected = false
     var exportSource: (title: String, rows: [Row])?
-    var exportTable: (title: String, header: [String], lines: [[String]])?
+    var exportTable: (title: String, unit: String, header: [String], lines: [[String]])?
     var historySelection = Set<UUID>()
     var historyAnchor: UUID?
     var savingName: String?
@@ -131,7 +131,18 @@ final class Session {
         popover = nil
         showingSheet = false
         exportSource = nil
-        exportTable = (title, header, lines)
+        exportTable = (title, "domain", header, lines)
+        showingExport = true
+    }
+
+    func exportRuns() {
+        guard !monitor.runs.isEmpty else { return }
+        let header = ["Time"] + MigrationStatus.allCases.map(\.rawValue)
+        let lines = monitor.runs.map { run in [run.date.formatted(.iso8601)] + MigrationStatus.allCases.map { String(run.count($0)) } }
+        popover = nil
+        showingSheet = false
+        exportSource = nil
+        exportTable = ("each run of \(monitor.title)", "run", header, lines)
         showingExport = true
     }
 
@@ -478,7 +489,7 @@ extension Session {
 
 enum Pane: Hashable { case results, watch, history, monitor }
 
-enum Popover { case autoRefresh, filter, lists, differsHint, cloudflareHint, rename, monitorInterval, monitorLog }
+enum Popover { case autoRefresh, filter, lists, differsHint, cloudflareHint, rename, monitorInterval, monitorLog, monitorTimeline }
 
 struct SortKey: Equatable {
     var column: String

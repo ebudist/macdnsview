@@ -1,4 +1,5 @@
 import AppKit
+import Charts
 import MacDNSViewCore
 import Observation
 import SwiftUI
@@ -24,6 +25,7 @@ final class Monitor {
     private(set) var events: [MonitorEvent] { didSet { defaults.set(try? JSONEncoder().encode(events), forKey: "monitor.events") } }
     private(set) var migratedAt: [String: Date] { didSet { defaults.set(try? JSONEncoder().encode(migratedAt), forKey: "monitor.migratedAt") } }
     private(set) var checks: [Migration.Check] { didSet { defaults.set(try? JSONEncoder().encode(checks), forKey: "monitor.checks") } }
+    private(set) var runs: [MonitorRun] { didSet { defaults.set(try? JSONEncoder().encode(runs), forKey: "monitor.runs") } }
     private(set) var lastRun: Date? { didSet { defaults.set(lastRun, forKey: "monitor.lastRun") } }
     private var states: [String: MonitorState] { didSet { defaults.set(try? JSONEncoder().encode(states), forKey: "monitor.states") } }
     var interval = 0 { didSet { schedule() } }
@@ -57,6 +59,7 @@ final class Monitor {
         events = defaults.data(forKey: "monitor.events").flatMap { try? JSONDecoder().decode([MonitorEvent].self, from: $0) } ?? []
         migratedAt = defaults.data(forKey: "monitor.migratedAt").flatMap { try? JSONDecoder().decode([String: Date].self, from: $0) } ?? [:]
         checks = defaults.data(forKey: "monitor.checks").flatMap { try? JSONDecoder().decode([Migration.Check].self, from: $0) } ?? []
+        runs = defaults.data(forKey: "monitor.runs").flatMap { try? JSONDecoder().decode([MonitorRun].self, from: $0) } ?? []
         lastRun = defaults.object(forKey: "monitor.lastRun") as? Date
         states = defaults.data(forKey: "monitor.states").flatMap { try? JSONDecoder().decode([String: MonitorState].self, from: $0) } ?? [:]
         domainCount = checks.count
@@ -148,6 +151,7 @@ final class Monitor {
             if check.status == .migrated { migrated.append(check.target) }
         }
         events = Array(events.prefix(500))
+        runs = Array((runs + [MonitorRun(date: now, counts: Dictionary(grouping: checks, by: \.status.rawValue).mapValues(\.count))]).suffix(500))
         stash()
         if !migrated.isEmpty {
             Notifier.post(migrated.count == 1 ? "\(migrated[0]) has the expected \(kind.name) record" : "\(migrated.count) domains have the expected \(kind.name) record",
@@ -182,9 +186,14 @@ final class Monitor {
         stash()
     }
 
+    func clearRuns() {
+        runs = []
+        stash()
+    }
+
     private func stash() {
         guard let name, saved.contains(where: { $0.name == name }) else { return }
-        states[name] = MonitorState(checks: checks, events: events, migratedAt: migratedAt, lastRun: lastRun)
+        states[name] = MonitorState(checks: checks, events: events, migratedAt: migratedAt, lastRun: lastRun, runs: runs)
     }
 
     func stop() {
@@ -214,6 +223,7 @@ final class Monitor {
         let state = states[monitor.name]
         checks = state?.checks ?? []
         events = state?.events ?? []
+        runs = state?.runs ?? []
         migratedAt = state?.migratedAt ?? [:]
         lastRun = state?.lastRun
         domainCount = checks.count
@@ -228,6 +238,7 @@ final class Monitor {
         checks = []
         rows = []
         events = []
+        runs = []
         migratedAt = [:]
         lastRun = nil
         selection = nil
@@ -247,6 +258,7 @@ final class Monitor {
         checks = []
         rows = []
         events = []
+        runs = []
         migratedAt = [:]
         lastRun = nil
         selection = nil
@@ -276,6 +288,15 @@ struct MonitorState: Codable {
     let events: [MonitorEvent]
     let migratedAt: [String: Date]
     let lastRun: Date?
+    var runs: [MonitorRun]?
+}
+
+struct MonitorRun: Codable, Identifiable {
+    var id = UUID()
+    let date: Date
+    let counts: [String: Int]
+
+    func count(_ status: MigrationStatus) -> Int { counts[status.rawValue] ?? 0 }
 }
 
 struct MonitorEvent: Codable, Identifiable {
@@ -432,6 +453,18 @@ struct MonitorView: View {
             if monitor.isRunning { Spinner() }
             Text(statusText).foregroundStyle(Color.t2)
             Spacer(minLength: 0)
+            Button { session.popover = session.popover == .monitorTimeline ? nil : .monitorTimeline } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chart.bar.xaxis").font(.system(size: 10))
+                    Text(monitor.runs.isEmpty ? "No runs yet" : "\(monitor.runs.count) run\(monitor.runs.count == 1 ? "" : "s")")
+                }
+                .foregroundStyle(monitor.runs.isEmpty ? Color.t3 : .accentText)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .overlay(alignment: .bottomTrailing) {
+                if session.popover == .monitorTimeline { timeline.offset(y: -24).fixedSize() }
+            }
             Button { session.popover = session.popover == .monitorLog ? nil : .monitorLog } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "list.bullet.rectangle").font(.system(size: 10))
@@ -451,6 +484,51 @@ struct MonitorView: View {
         .frame(height: 28)
         .background(Color.statusBar)
         .overlay(alignment: .top) { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
+    }
+
+    private var timeline: some View {
+        Panel(radius: 10, padding: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 14) {
+                    Text("Timeline").font(.ui(12, .bold))
+                    Spacer()
+                    if !monitor.runs.isEmpty {
+                        Button("Export…") { session.exportRuns() }.buttonStyle(.plain).font(.ui(12)).foregroundStyle(Color.accentText)
+                        Button("Clear") { monitor.clearRuns() }.buttonStyle(.plain).font(.ui(12)).foregroundStyle(Color.accentText)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                Rectangle().fill(Color.white(0.08)).frame(height: 1)
+                if monitor.runs.isEmpty {
+                    Text("Each check adds a run with the number of domains in each status.").font(.ui(12)).foregroundStyle(Color.t3).padding(14)
+                } else {
+                    let shown = MigrationStatus.allCases.filter { status in monitor.runs.contains { $0.count(status) > 0 } }
+                    Chart {
+                        ForEach(shown, id: \.self) { status in
+                            ForEach(monitor.runs) { run in
+                                LineMark(x: .value("Run", run.date), y: .value("Domains", run.count(status)), series: .value("Status", status.rawValue))
+                                    .foregroundStyle(by: .value("Status", status.rawValue))
+                                PointMark(x: .value("Run", run.date), y: .value("Domains", run.count(status)))
+                                    .foregroundStyle(by: .value("Status", status.rawValue))
+                                    .symbolSize(18)
+                            }
+                        }
+                    }
+                    .chartForegroundStyleScale(domain: shown.map(\.rawValue), range: shown.map(\.color))
+                    .chartLegend(position: .bottom)
+                    .chartXAxis { AxisMarks { AxisGridLine().foregroundStyle(Color.white(0.06)); AxisValueLabel().foregroundStyle(Color.t3) } }
+                    .chartYAxis { AxisMarks { AxisGridLine().foregroundStyle(Color.white(0.06)); AxisValueLabel().foregroundStyle(Color.t3) } }
+                    .frame(height: 180)
+                    .padding(14)
+                    if let last = monitor.runs.last {
+                        Text("Last run \(last.date.formatted(date: .abbreviated, time: .standard)): \(last.count(.migrated)) of \(last.counts.values.reduce(0, +)) migrated")
+                            .font(.ui(11.5)).foregroundStyle(Color.t2).padding(.horizontal, 14).padding(.bottom, 12)
+                    }
+                }
+            }
+        }
+        .frame(width: 460)
     }
 
     private var log: some View {

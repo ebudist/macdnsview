@@ -347,7 +347,7 @@ struct ExportSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white(0.1)))
             }
         } footer: {
-            Text(session.exportTable.map { "\($0.lines.count) domain\($0.lines.count == 1 ? "" : "s") · Propagation Checker report" } ?? "\(rows.count) row\(rows.count == 1 ? "" : "s") · visible columns")
+            Text(session.exportTable.map { "\($0.lines.count) \($0.unit)\($0.lines.count == 1 ? "" : "s") · Propagation Checker report" } ?? "\(rows.count) row\(rows.count == 1 ? "" : "s") · visible columns")
                 .font(.ui(12)).foregroundStyle(Color.white(0.45))
             Spacer()
             SecondaryButton(title: "Cancel") { session.closeOverlays() }
