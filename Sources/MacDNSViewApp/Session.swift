@@ -37,6 +37,7 @@ final class Session {
     var serverText: String { didSet { defaults.set(serverText, forKey: "server") } }
     var options: LookupOptions { didSet { defaults.set(try? JSONEncoder().encode(options), forKey: "options") } }
     var visibleColumns: Set<String> { didSet { defaults.set(Array(visibleColumns), forKey: "visibleColumns") } }
+    var columnWidths: [String: Double] { didSet { defaults.set(columnWidths, forKey: "columnWidths") } }
     var savedLists: [SavedList] { didSet { defaults.set(try? JSONEncoder().encode(savedLists), forKey: "savedLists") } }
     var currentList: String?
 
@@ -58,6 +59,7 @@ final class Session {
         serverText = defaults.string(forKey: "server") ?? ""
         options = defaults.data(forKey: "options").flatMap { try? JSONDecoder().decode(LookupOptions.self, from: $0) } ?? LookupOptions()
         visibleColumns = defaults.stringArray(forKey: "visibleColumns").map(Set.init) ?? ["index", "target", "type", "data", "ttl", "server", "time", "validated", "differs"]
+        columnWidths = defaults.dictionary(forKey: "columnWidths") as? [String: Double] ?? [:]
         savedLists = defaults.data(forKey: "savedLists").flatMap { try? JSONDecoder().decode([SavedList].self, from: $0) } ?? []
         history = defaults.data(forKey: "history").flatMap { try? JSONDecoder().decode([HistoryEntry].self, from: $0) } ?? []
     }

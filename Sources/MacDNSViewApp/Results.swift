@@ -25,11 +25,15 @@ struct ResultsColumn: Identifiable {
         ResultsColumn(id: "differs", label: "Differs", width: 58),
     ]
 
-    static func widths(_ columns: [ResultsColumn], in total: CGFloat) -> [CGFloat] {
-        let fixed = columns.compactMap(\.width).reduce(0, +)
-        let fractions = columns.filter { $0.width == nil }.map(\.fraction).reduce(0, +)
-        let free = max(0, total - fixed)
-        return columns.map { $0.width ?? max($0.minWidth, fractions == 0 ? 0 : free * $0.fraction / fractions) }
+    static let minimum: CGFloat = 36
+
+    static func widths(_ columns: [ResultsColumn], in total: CGFloat, custom: [String: Double] = [:]) -> [CGFloat] {
+        let fixed = columns.map { custom[$0.id].map { CGFloat($0) } ?? $0.width }
+        let fractions = zip(columns, fixed).filter { $1 == nil }.map(\.0.fraction).reduce(0, +)
+        let free = max(0, total - fixed.compactMap { $0 }.reduce(0, +))
+        return zip(columns, fixed).map { column, width in
+            width ?? max(column.minWidth, fractions == 0 ? 0 : free * column.fraction / fractions)
+        }
     }
 }
 
@@ -106,7 +110,7 @@ struct ResultsView: View {
             }
             .help("Cloudflare: matched against cloudflare.com/ips and *.ns.cloudflare.com")
             .padding(.trailing, -8)
-            hint(.cloudflareHint, title: "Cloudflare", text: Self.cloudflareHint)
+            hint(.cloudflareHint, title: "Cloudflare", text: Self.cloudflareHint, leading: false)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
@@ -116,12 +120,12 @@ struct ResultsView: View {
     private static let differsHint = "A row differs when you look up against two or more servers and this server's answer for the Target and record type is not the answer most servers gave. Turn the switch on to show only those rows. With one server nothing can differ."
     private static let cloudflareHint = "Marks Targets served by Cloudflare: an A or AAAA answer inside Cloudflare's published IP ranges (cloudflare.com/ips), or an NS answer that is a cloudflare.com host. On shows only those Targets, Off hides them, Any shows everything. Only A, AAAA, and NS answers are checked, so a lookup of MX or TXT alone never finds Cloudflare."
 
-    private func hint(_ popover: Popover, title: String, text: String) -> some View {
+    private func hint(_ popover: Popover, title: String, text: String, leading: Bool = true) -> some View {
         IconButton(symbol: "questionmark.circle", color: session.popover == popover ? .accentText : .white(0.45), size: 12, width: 20, height: 20,
                    help: "What is \(title)?") {
             session.popover = session.popover == popover ? nil : popover
         }
-        .overlay(alignment: .topLeading) {
+        .overlay(alignment: leading ? .topLeading : .topTrailing) {
             if session.popover == popover {
                 Panel(radius: 10, padding: 0) {
                     VStack(alignment: .leading, spacing: 6) {
@@ -132,7 +136,7 @@ struct ResultsView: View {
                     .padding(.vertical, 12)
                 }
                 .frame(width: 300)
-                .offset(x: -10, y: 26)
+                .offset(x: leading ? -10 : 10, y: 26)
             }
         }
     }
@@ -194,9 +198,10 @@ private struct ResultsGrid: View {
         let columns = ResultsColumn.all.filter { session.visibleColumns.contains($0.id) }
         let rows = session.visibleRows
         GeometryReader { geo in
-            let widths = ResultsColumn.widths(columns, in: geo.size.width - 16)
+            let widths = ResultsColumn.widths(columns, in: geo.size.width - 16, custom: session.columnWidths)
+            let total = widths.reduce(0, +) + 16
             ScrollViewReader { proxy in
-                ScrollView(.vertical) {
+                ScrollView(total > geo.size.width ? [.horizontal, .vertical] : .vertical) {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         SwiftUI.Section {
                             ForEach(Array(rows.enumerated()), id: \.element.id) { k, row in
@@ -208,6 +213,7 @@ private struct ResultsGrid: View {
                         }
                     }
                     .padding(.bottom, 12)
+                    .frame(width: max(total, geo.size.width), alignment: .leading)
                 }
                 .onChange(of: session.selection) { _, selection in
                     if let id = selection.first { proxy.scrollTo(id) }
@@ -224,9 +230,17 @@ private struct ResultsGrid: View {
                         : session.sort!.ascending ? SortKey(column: column.id, ascending: false) : nil
                 }
                 .frame(width: widths[i])
+                .overlay(alignment: .trailing) {
+                    ResizeHandle(width: widths[i]) { session.columnWidths[column.id] = Double(max(ResultsColumn.minimum, $0)) } fit: {
+                        session.columnWidths[column.id] = Double(fittingWidth(column))
+                    }
+                }
             }
         }
         .frame(height: 28)
+        .contextMenu {
+            Button("Reset Column Widths") { session.columnWidths = [:] }.disabled(session.columnWidths.isEmpty)
+        }
         .padding(.horizontal, 8)
         .background(Color.window)
         .overlay(alignment: .bottom) { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
@@ -302,6 +316,33 @@ private struct ResultsGrid: View {
         }
     }
 
+    private func fittingWidth(_ column: ResultsColumn) -> CGFloat {
+        let mono: Set<String> = ["index", "type", "name", "address", "data", "ttl", "server", "time"]
+        let font = mono.contains(column.id) ? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+            : NSFont.systemFont(ofSize: 12, weight: column.id == "target" ? .medium : .regular)
+        let header = (column.label as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11.5, weight: .semibold)]).width + 14
+        let widest = session.visibleRows.prefix(2000).map { (cellText(column.id, $0) as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        let extra: CGFloat = column.id == "index" ? 30 : 0
+        return min(640, max(header, widest + extra) + 20)
+    }
+
+    private func cellText(_ column: String, _ row: Row) -> String {
+        switch column {
+        case "index": String(row.index)
+        case "target": row.target
+        case "type": row.typeName
+        case "name": row.name
+        case "address": row.address
+        case "data": row.value
+        case "section": row.section?.rawValue ?? ""
+        case "ttl": row.ttl.map(String.init) ?? ""
+        case "server": row.server
+        case "time": row.time.map { "\($0) ms" } ?? ""
+        case "validated": row.validated == false ? "no" : ""
+        default: row.differs == true ? "yes" : ""
+        }
+    }
+
     private var cloud: some View {
         Image(systemName: "cloud.fill").font(.system(size: 11)).foregroundStyle(Color.cloudflare)
     }
@@ -318,6 +359,39 @@ private struct ResultsGrid: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 80)
+    }
+}
+
+private final class DragStart: ObservableObject {
+    var width: CGFloat?
+}
+
+private struct ResizeHandle: View {
+    let width: CGFloat
+    let resize: (CGFloat) -> Void
+    let fit: () -> Void
+    @StateObject private var start = DragStart()
+    @StateObject private var hover = HoverState()
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 8)
+            .overlay(Rectangle().fill(hover.on ? Color.accent : .white(0.1)).frame(width: hover.on ? 2 : 1).padding(.vertical, 6))
+            .contentShape(Rectangle())
+            .onHover { on in
+                hover.on = on
+                if on { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    let base = start.width ?? width
+                    start.width = base
+                    resize(base + value.translation.width)
+                }
+                .onEnded { _ in start.width = nil })
+            .onTapGesture(count: 2, perform: fit)
+            .help("Drag to resize, double-click to fit")
     }
 }
 

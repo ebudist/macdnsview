@@ -26,6 +26,7 @@ struct ContentView: View {
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .zIndex(1)
                         if session.pane == .results, session.showingInspector, !session.rows.isEmpty || session.isRunning {
                             InspectorView(session: session)
                                 .frame(width: 320)
