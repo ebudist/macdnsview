@@ -19,6 +19,7 @@ final class Monitor {
         }
     }
     var name: String? { didSet { defaults.set(name, forKey: "monitor.name") } }
+    var includeWWW: Bool { didSet { defaults.set(includeWWW, forKey: "monitor.www") } }
     var saved: [SavedMonitor] { didSet { defaults.set(try? JSONEncoder().encode(saved), forKey: "monitor.saved") } }
     private(set) var events: [MonitorEvent] { didSet { defaults.set(try? JSONEncoder().encode(events), forKey: "monitor.events") } }
     private(set) var migratedAt: [String: Date] { didSet { defaults.set(try? JSONEncoder().encode(migratedAt), forKey: "monitor.migratedAt") } }
@@ -51,6 +52,7 @@ final class Monitor {
         serverText = defaults.string(forKey: "monitor.server") ?? Self.defaultServers
         typeName = defaults.string(forKey: "monitor.type") ?? "A"
         name = defaults.string(forKey: "monitor.name")
+        includeWWW = defaults.bool(forKey: "monitor.www")
         saved = defaults.data(forKey: "monitor.saved").flatMap { try? JSONDecoder().decode([SavedMonitor].self, from: $0) } ?? []
         events = defaults.data(forKey: "monitor.events").flatMap { try? JSONDecoder().decode([MonitorEvent].self, from: $0) } ?? []
         migratedAt = defaults.data(forKey: "monitor.migratedAt").flatMap { try? JSONDecoder().decode([String: Date].self, from: $0) } ?? [:]
@@ -70,7 +72,11 @@ final class Monitor {
     }
 
     var kind: Migration.Kind { typeName == "DMARC" ? .dmarc : .record(RecordType.lookupOrder.first { $0.description == typeName } ?? .a) }
-    var entries: [Migration.Entry] { Migration.parse(targetsText, kind: kind) }
+    var entries: [Migration.Entry] {
+        let entries = Migration.parse(targetsText, kind: kind)
+        return includeWWW ? Migration.addingWWW(entries) : entries
+    }
+    var leftoverCount: Int { checks.filter { $0.leftoverAAAA != nil }.count }
     var newValues: [String] { Migration.values(newText, kind: kind) }
     var oldValues: [String] { Migration.values(oldText, kind: kind) }
     var title: String { name ?? "Propagation Checker" }
@@ -106,7 +112,7 @@ final class Monitor {
         guard !entries.isEmpty else { return }
         let kind = self.kind
         var options = LookupOptions()
-        if case .record(let type) = kind { options.types = [type] } else { options.types = []; options.dmarc = true }
+        if case .record(let type) = kind { options.types = type == .a ? [.a, .aaaa] : [type] } else { options.types = []; options.dmarc = true }
         options.reverseLookupAddresses = false
         options.hideAdditional = true
         let lookup = Lookup(options: options, servers: (try? Server.list(parsing: serverText)) ?? [])
@@ -186,7 +192,7 @@ final class Monitor {
 
     func save(as name: String) {
         saved.removeAll { $0.name == name }
-        saved.append(SavedMonitor(name: name, targets: targetsText, new: newText, old: oldText, server: serverText, type: typeName))
+        saved.append(SavedMonitor(name: name, targets: targetsText, new: newText, old: oldText, server: serverText, type: typeName, www: includeWWW))
         saved.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         self.name = name
         stash()
@@ -201,6 +207,7 @@ final class Monitor {
         oldText = monitor.old
         serverText = monitor.server
         typeName = monitor.type ?? "A"
+        includeWWW = monitor.www ?? false
         name = monitor.name
         let state = states[monitor.name]
         checks = state?.checks ?? []
@@ -232,6 +239,7 @@ final class Monitor {
         newText = ""
         oldText = ""
         typeName = "A"
+        includeWWW = false
         serverText = Self.defaultServers
         name = nil
         checks = []
@@ -248,7 +256,7 @@ final class Monitor {
     func rename(_ old: String, to new: String) {
         guard let monitor = saved.first(where: { $0.name == old }) else { return }
         saved.removeAll { $0.name == old || $0.name == new }
-        saved.append(SavedMonitor(name: new, targets: monitor.targets, new: monitor.new, old: monitor.old, server: monitor.server, type: monitor.type))
+        saved.append(SavedMonitor(name: new, targets: monitor.targets, new: monitor.new, old: monitor.old, server: monitor.server, type: monitor.type, www: monitor.www))
         saved.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         states[new] = states.removeValue(forKey: old)
         if name == old { name = new }
@@ -283,6 +291,7 @@ struct SavedMonitor: Codable {
     let old: String
     let server: String
     var type: String?
+    var www: Bool?
 }
 
 extension MigrationStatus {
@@ -488,6 +497,7 @@ struct MonitorView: View {
             parts.append("next check at \(next.formatted(date: .omitted, time: .standard))")
         }
         if monitor.filter != nil { parts.append("\(monitor.visibleChecks.count) shown") }
+        if monitor.leftoverCount > 0 { parts.append("\(monitor.leftoverCount) with AAAA left over") }
         return parts.joined(separator: " · ")
     }
 }
@@ -496,7 +506,7 @@ private struct MonitorTable: View {
     let monitor: Monitor
     let session: Session
 
-    private static let columns: [(String, CGFloat?, CGFloat)] = [("Status", 130, 0), ("Domain", nil, 1.1), ("Expected", nil, 0.9), ("Answers by server", nil, 2), ("TTL", 60, 0), ("Migrated", 92, 0)]
+    private static let columns: [(String, CGFloat?, CGFloat)] = [("Status", 150, 0), ("Domain", nil, 1.1), ("Expected", nil, 0.9), ("Answers by server", nil, 2), ("TTL", 60, 0), ("Migrated", 92, 0)]
 
     var body: some View {
         GeometryReader { geo in
@@ -528,7 +538,12 @@ private struct MonitorTable: View {
     private func row(_ check: Migration.Check, odd: Bool, widths: [CGFloat]) -> some View {
         let selected = monitor.selection == check.target
         return HStack(spacing: 0) {
-            StatusPill(status: check.status).padding(.horizontal, 8).frame(width: widths[0], alignment: .leading)
+            HStack(spacing: 5) {
+                StatusPill(status: check.status)
+                if let leftover = check.leftoverAAAA { LeftoverMark(addresses: leftover) }
+            }
+            .padding(.horizontal, 8)
+            .frame(width: widths[0], alignment: .leading)
             Text(check.target).fontWeight(.medium).foregroundStyle(Color.white(0.92)).cell(widths[1])
             Text(check.expected.joined(separator: ", ")).font(.mono(12)).foregroundStyle(Color.t2).cell(widths[2])
             answers(check).cell(widths[3])
@@ -588,6 +603,17 @@ private struct MonitorTable: View {
     }
 }
 
+struct LeftoverMark: View {
+    let addresses: [String]
+
+    var body: some View {
+        Image(systemName: "exclamationmark.triangle.fill")
+            .font(.system(size: 11))
+            .foregroundStyle(Color.warn)
+            .help("AAAA still answers \(addresses.joined(separator: ", ")), which is not an expected IPv6 address, so IPv6 visitors may reach another server")
+    }
+}
+
 private extension View {
     func cell(_ width: CGFloat, trailing: Bool = false) -> some View {
         lineLimit(1).truncationMode(.tail).padding(.horizontal, 8).frame(width: width, alignment: trailing ? .trailing : .leading)
@@ -613,6 +639,17 @@ private struct MonitorDetail: View {
                     field("Expected", check.expected.joined(separator: ", "), .ok)
                     field("Previous", monitor.oldValues.joined(separator: ", "), .warn)
                     field("Lowest TTL", check.ttl.map { "\($0) s" } ?? "", .t1)
+                }
+                if let leftover = check.leftoverAAAA {
+                    divider
+                    section("IPv6") {
+                        HStack(alignment: .top, spacing: 8) {
+                            LeftoverMark(addresses: leftover)
+                            Text("AAAA answers that are not an expected IPv6 address. IPv6 visitors may still reach another server; add the new IPv6 address to Expected if it is right.")
+                                .font(.ui(12)).foregroundStyle(Color.white(0.6)).fixedSize(horizontal: false, vertical: true)
+                        }
+                        ForEach(leftover, id: \.self) { Text($0).font(.mono(12)).foregroundStyle(Color.warn).textSelection(.enabled) }
+                    }
                 }
                 divider
                 section("Answers by server") {
@@ -744,6 +781,16 @@ struct MonitorSheet: View {
                     }
                 }
             }
+            HStack(alignment: .top, spacing: 12) {
+                formLabel("Options")
+                VStack(alignment: .leading, spacing: 7) {
+                    Checkbox(label: "Also check the www. name of each domain", on: monitor.includeWWW, size: 12.5) { monitor.includeWWW.toggle() }
+                    if monitor.kind == .record(.a) {
+                        Text("A checks also look up AAAA and warn about IPv6 answers that are not in Expected.")
+                            .font(.ui(11.5)).foregroundStyle(Color.white(0.45)).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
         } footer: {
             if let name = monitor.savingName {
                 TextField("Check name", text: Binding { name } set: { monitor.savingName = $0 })
@@ -792,7 +839,7 @@ struct MonitorSheet: View {
 
     private var expectedPrompt: String {
         switch monitor.kind {
-        case .record(.a): "IPv4 addresses of the new server, separated by commas"
+        case .record(.a): "IPv4 addresses of the new server, plus IPv6 to check AAAA"
         case .record(.aaaa): "IPv6 addresses of the new server, separated by commas"
         case _ where monitor.kind.isHost: "Host names, such as \(example), separated by commas"
         case _ where monitor.kind.isText: "Text the record must contain; separate several with commas"

@@ -43,6 +43,7 @@ public enum Migration {
         public let answers: [String: [String]]
         public let ttl: UInt32?
         public let error: String?
+        public var leftoverAAAA: [String]?
     }
 
     public static func values(_ text: String, kind: Kind) -> [String] {
@@ -54,7 +55,7 @@ public enum Migration {
 
     public static func invalid(_ values: [String], kind: Kind) -> String? {
         switch kind {
-        case .record(.a): values.first { IPv4Address($0) == nil }
+        case .record(.a): values.first { IPv4Address($0) == nil && IPv6Address($0) == nil }
         case .record(.aaaa): values.first { IPv6Address($0) == nil }
         case _ where kind.isHost: values.first { $0.contains(where: \.isWhitespace) || $0.contains("://") }
         default: nil
@@ -73,6 +74,15 @@ public enum Migration {
             entries.append(Entry(target: target, expected: kind.isText ? (rest.isEmpty ? [] : [rest]) : values(rest, kind: kind)))
         }
         return entries
+    }
+
+    public static func addingWWW(_ entries: [Entry]) -> [Entry] {
+        var seen = Set(entries.map(\.target.queryName))
+        return entries.flatMap { entry -> [Entry] in
+            guard !entry.target.display.hasPrefix("www."), let www = Target("www." + entry.target.display),
+                  seen.insert(www.queryName).inserted else { return [entry] }
+            return [entry, Entry(target: www, expected: entry.expected)]
+        }
     }
 
     static func text(_ row: Row, kind: Kind) -> String {
@@ -113,8 +123,15 @@ public enum Migration {
             if !text.isEmpty, !(byServer[row.server]?.contains(text) ?? false) { byServer[row.server, default: []].append(text) }
         }
         let ttl = answers.compactMap(\.ttl).min()
+        var leftover: [String]?
+        if kind == .record(.a) {
+            let expectedV6 = Set(new.compactMap { IPv6Address($0)?.rawValue })
+            let aaaa = rows.filter { $0.target == target && $0.type == .aaaa && $0.error == nil && $0.section == .answer }.map(\.address)
+            let left = Array(Set(aaaa.filter { IPv6Address($0).map { !expectedV6.contains($0.rawValue) } ?? false })).sorted()
+            leftover = left.isEmpty ? nil : left
+        }
         func result(_ status: MigrationStatus, _ error: String? = nil) -> Check {
-            Check(target: target, status: status, expected: new, answers: byServer, ttl: ttl, error: error)
+            Check(target: target, status: status, expected: new, answers: byServer, ttl: ttl, error: error, leftoverAAAA: leftover)
         }
 
         guard !byServer.isEmpty else { return result(.failed, mine.first { $0.error != nil }?.error ?? "no \(kind.name) answer") }

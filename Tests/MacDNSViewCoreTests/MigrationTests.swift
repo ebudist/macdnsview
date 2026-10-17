@@ -42,7 +42,7 @@ private let kindA = Migration.Kind.record(.a)
 
 @Test func migrationValuesAreCheckedPerType() {
     #expect(Migration.invalid(["203.0.113.10", "nope"], kind: kindA) == "nope")
-    #expect(Migration.invalid(["2001:db8::1"], kind: kindA) == "2001:db8::1")
+    #expect(Migration.invalid(["not-an-ip"], kind: kindA) == "not-an-ip")
     #expect(Migration.invalid(["2001:db8::1"], kind: .record(.aaaa)) == nil)
     #expect(Migration.invalid(["mx.example.com"], kind: .record(.mx)) == nil)
     #expect(Migration.invalid(["https://mx.example.com"], kind: .record(.mx)) == "https://mx.example.com")
@@ -101,4 +101,19 @@ private let kindA = Migration.Kind.record(.a)
     #expect(export(header: ["Domain", "Status"], lines: [["x.com", "Migrated"], ["a,b", "Pending"]], as: .csv) == "Domain,Status\nx.com,Migrated\n\"a,b\",Pending\n")
     let json = try JSONSerialization.jsonObject(with: Data(export(header: ["Domain", "Status"], lines: [["x.com", "Migrated"]], as: .json).utf8)) as! [[String: String]]
     #expect(json == [["Domain": "x.com", "Status": "Migrated"]])
+}
+
+@Test func migrationAddsTheWWWNameOnce() {
+    let entries = Migration.addingWWW(Migration.parse("example.com 203.0.113.10\nwww.shop.com\nshop.com\napp.example.com", kind: kindA))
+    #expect(entries.map(\.target.display) == ["example.com", "www.example.com", "www.shop.com", "shop.com", "app.example.com", "www.app.example.com"])
+    #expect(entries[1].expected == ["203.0.113.10"])
+}
+
+@Test func migrationWarnsAboutAAAAOutsideTheExpectedIPv6() {
+    let rows = [a("x.com", "203.0.113.10"), row("x.com", .aaaa, address: "2001:db8::1"), row("x.com", .aaaa, address: "2001:db8:0::10")]
+    #expect(Migration.check("x.com", rows: rows, kind: kindA, new: ["203.0.113.10"], old: []).leftoverAAAA == ["2001:db8:0::10", "2001:db8::1"])
+    #expect(Migration.check("x.com", rows: rows, kind: kindA, new: ["203.0.113.10", "2001:db8::10"], old: []).leftoverAAAA == ["2001:db8::1"])
+    #expect(Migration.check("x.com", rows: rows, kind: kindA, new: ["203.0.113.10"], old: []).status == .migrated)
+    #expect(Migration.check("x.com", rows: [a("x.com", "203.0.113.10")], kind: kindA, new: ["203.0.113.10"], old: []).leftoverAAAA == nil)
+    #expect(Migration.invalid(["2001:db8::1"], kind: kindA) == nil)
 }
