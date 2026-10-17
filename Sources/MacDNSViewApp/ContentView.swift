@@ -113,25 +113,21 @@ private struct Sidebar: View {
             }
             .frame(height: 52)
             .padding(.trailing, 2)
-            heading("Lookup").padding(.top, 4)
-            item("Bulk Lookup", "list.bullet", .results, badge: session.rows.isEmpty ? nil : String(session.rows.count))
-            item("Watch", "waveform.path.ecg", .watch, badge: session.autoRefresh == 0 ? nil : intervalName(session.autoRefresh), live: true)
-            item("History", "clock.arrow.circlepath", .history, badge: nil)
-            heading("Migration").padding(.top, 12)
-            item("Propagation Checker", "arrow.left.arrow.right.circle", .monitor, badge: monitorBadge, live: session.monitor.interval > 0)
-            ForEach(session.monitor.saved, id: \.name) { saved in savedMonitor(saved) }
-            HStack {
-                heading("Saved Lists")
-                Spacer()
-                IconButton(symbol: "plus", color: .white(0.5), size: 11, width: 20, height: 20, help: "New list") { session.newList() }
-            }
-            .padding(.top, 12)
             ScrollView {
-                VStack(spacing: 1) {
+                VStack(alignment: .leading, spacing: 1) {
+                    heading("Lookup").padding(.top, 4)
+                    item("Bulk Lookup", "list.bullet", .results, badge: session.rows.isEmpty ? nil : String(session.rows.count),
+                         add: ("New lookup", { session.pane = .results; session.newList() }))
                     ForEach(session.savedLists, id: \.name) { list in savedList(list) }
+                    item("Watch", "waveform.path.ecg", .watch, badge: session.autoRefresh == 0 ? nil : intervalName(session.autoRefresh), live: true)
+                    item("History", "clock.arrow.circlepath", .history, badge: nil)
+                    heading("Migration").padding(.top, 12)
+                    item("Propagation Checker", "arrow.left.arrow.right.circle", .monitor, badge: monitorBadge, live: session.monitor.interval > 0,
+                         add: ("New check", { session.monitor.newSession(); session.pane = .monitor; session.openMonitorSetup() }))
+                    ForEach(session.monitor.saved, id: \.name) { saved in savedMonitor(saved) }
                 }
             }
-            Spacer(minLength: 0)
+            .scrollIndicators(.never)
         }
         .padding(.horizontal, 10)
     }
@@ -171,7 +167,12 @@ private struct Sidebar: View {
         Text(text).font(.ui(11, .semibold)).foregroundStyle(Color.white(0.35)).padding(.horizontal, 8).padding(.vertical, 4)
     }
 
-    private func item(_ label: String, _ symbol: String, _ pane: Pane, badge: String?, live: Bool = false) -> some View {
+    private func item(_ label: String, _ symbol: String, _ pane: Pane, badge: String?, live: Bool = false,
+                      add: (String, () -> Void)? = nil) -> some View {
+        ToolRow(add: add) { row(label, symbol, pane, badge: badge, live: live) }
+    }
+
+    private func row(_ label: String, _ symbol: String, _ pane: Pane, badge: String?, live: Bool) -> some View {
         let on = session.pane == pane
         return HoverButton(action: { session.pane = pane; session.popover = nil }, normal: on ? .accent.opacity(0.2) : .clear,
                            hover: on ? .accent.opacity(0.26) : .white(0.06), radius: 6) {
@@ -200,14 +201,15 @@ private struct Sidebar: View {
         let count = Target.parse(list.targets, extractHostFromURL: list.options.extractHostFromURL).count
         return HoverButton(action: { session.runList(list.name) }, normal: on ? .white(0.08) : .clear, hover: .white(0.06), radius: 6) {
             HStack(spacing: 9) {
-                Image(systemName: "bookmark").font(.system(size: 12, weight: .medium)).foregroundStyle(on ? Color.accentText : .t3).frame(width: 16)
+                Image(systemName: "bookmark").font(.system(size: 11, weight: .medium)).foregroundStyle(on ? Color.accentText : .t3).frame(width: 16)
                 Text(list.name).lineLimit(1).truncationMode(.tail).foregroundStyle(on ? Color.white : .t1)
                 Spacer(minLength: 0)
                 Text(String(count)).font(.ui(11)).monospacedDigit().foregroundStyle(Color.white(0.35))
             }
-            .font(.ui(13))
-            .padding(.horizontal, 8)
-            .frame(height: 30)
+            .font(.ui(12.5))
+            .padding(.leading, 24)
+            .padding(.trailing, 8)
+            .frame(height: 28)
         }
         .contextMenu {
             Button("Rename…") {
@@ -215,6 +217,24 @@ private struct Sidebar: View {
             }
             Button("Delete", role: .destructive) { session.deleteList(list.name) }
         }
+    }
+}
+
+private struct ToolRow<Row: View>: View {
+    let add: (String, () -> Void)?
+    @ViewBuilder let row: () -> Row
+    @StateObject private var hover = HoverState()
+
+    var body: some View {
+        row()
+            .overlay(alignment: .trailing) {
+                if let add, hover.on {
+                    IconButton(symbol: "plus", color: .white(0.6), size: 11, width: 20, height: 20, help: add.0, action: add.1)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(Color.sidebar))
+                        .padding(.trailing, 5)
+                }
+            }
+            .onHover { hover.on = $0 }
     }
 }
 
@@ -381,7 +401,7 @@ private struct Header: View {
 
     private var renameButton: some View {
         IconButton(symbol: "pencil", color: session.popover == .rename ? .accentText : .white(0.45), size: 11, width: 20, height: 18,
-                   help: session.currentList == nil ? "Name this lookup and save it as a list" : "Rename this lookup") {
+                   help: session.currentList == nil ? "Name this lookup and save it" : "Rename this saved lookup") {
             session.lookupName = session.currentList ?? ""
             session.popover = session.popover == .rename ? nil : .rename
         }
@@ -399,7 +419,7 @@ private struct Header: View {
                             SecondaryButton(title: "Save") { session.nameLookup() }
                                 .disabled(session.lookupName.trimmingCharacters(in: .whitespaces).isEmpty)
                         }
-                        Text("Saved as a list in the sidebar with the current Targets, Server, and options.")
+                        Text("Saved under Bulk Lookup in the sidebar with the current Targets, Server, and options.")
                             .font(.ui(11)).foregroundStyle(Color.white(0.45)).fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.horizontal, 14)

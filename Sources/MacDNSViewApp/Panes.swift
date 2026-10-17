@@ -479,7 +479,7 @@ struct HistoryView: View {
     let alert = NSAlert()
     alert.alertStyle = .warning
     alert.messageText = all ? "Delete all \(ids.count) lookups from History?" : ids.count == 1 ? "Delete this lookup from History?" : "Delete \(ids.count) lookups from History?"
-    alert.informativeText = "Their stored results are deleted too. Saved lists are not affected."
+    alert.informativeText = "Their stored results are deleted too. Saved lookups are not affected."
     alert.addButton(withTitle: "Delete").hasDestructiveAction = true
     alert.addButton(withTitle: "Cancel")
     if alert.runModal() == .alertFirstButtonReturn { session.deleteHistory(ids) }

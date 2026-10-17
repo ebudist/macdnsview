@@ -35,6 +35,14 @@ _Avoid_: settings, DNS options
 The tool that looks up many Targets at once and shows every Record, with the Lookup options and Servers the user chose.
 _Avoid_: Results (the pane's old name)
 
+**Saved lookup**:
+Targets, Server, and Lookup options saved under a name, listed under Bulk Lookup in the sidebar and run with one click.
+_Avoid_: saved list
+
 **Propagation Checker**:
 The Migration tool that checks each domain's answers for one record type against the expected values on several Servers and gives each domain a status, such as Migrated or Pending.
 _Avoid_: DNS Monitor, comparator
+
+**Saved check**:
+The domains, record type, expected and previous values, and Servers of a Propagation Checker run, saved under a name with its latest results and status changes.
+_Avoid_: saved monitor

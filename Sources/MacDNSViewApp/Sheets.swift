@@ -125,7 +125,7 @@ struct TargetsSheet: View {
             }
         } footer: {
             if let name = session.savingName {
-                TextField("List name", text: Binding { name } set: { session.savingName = $0 })
+                TextField("Lookup name", text: Binding { name } set: { session.savingName = $0 })
                     .textFieldStyle(.plain)
                     .font(.ui(12.5))
                     .fieldStyle(focused: true)
@@ -134,7 +134,7 @@ struct TargetsSheet: View {
                 SecondaryButton(title: "Save", action: saveList)
             } else {
                 HoverButton(action: { session.savingName = session.currentList ?? "" }, hover: .accent.opacity(0.12), radius: 6) {
-                    Text("Save as List…").font(.ui(13)).foregroundStyle(Color.accentText).padding(.horizontal, 12).frame(height: 26)
+                    Text("Save Lookup…").font(.ui(13)).foregroundStyle(Color.accentText).padding(.horizontal, 12).frame(height: 26)
                 }
             }
             Spacer()
@@ -158,7 +158,7 @@ struct TargetsSheet: View {
     private var listsButton: some View {
         HoverButton(action: { session.popover = session.popover == .lists ? nil : .lists }, normal: .white(0.1), hover: .white(0.14), radius: 6) {
             HStack(spacing: 6) {
-                Text(session.currentList ?? "Saved Lists")
+                Text(session.currentList ?? "Saved Lookups")
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(Color.white(0.6))
             }
             .font(.ui(12))
@@ -172,7 +172,7 @@ struct TargetsSheet: View {
                 Panel(background: .menu) {
                     VStack(alignment: .leading, spacing: 0) {
                         if session.savedLists.isEmpty {
-                            Text("No saved lists").font(.ui(13)).foregroundStyle(Color.t3).padding(.horizontal, 9).frame(height: 24)
+                            Text("No saved lookups").font(.ui(13)).foregroundStyle(Color.t3).padding(.horizontal, 9).frame(height: 24)
                         }
                         ForEach(session.savedLists, id: \.name) { list in
                             MenuItem(label: list.name) {
