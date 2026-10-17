@@ -68,7 +68,7 @@ final class Monitor {
     var entries: [Migration.Entry] { Migration.parse(targetsText, kind: kind) }
     var newValues: [String] { Migration.values(newText, kind: kind) }
     var oldValues: [String] { Migration.values(oldText, kind: kind) }
-    var title: String { name ?? "DNS Monitor" }
+    var title: String { name ?? "Propagation Checker" }
     var visibleChecks: [Migration.Check] { checks.filter { filter == nil || $0.status == filter } }
     var selectedCheck: Migration.Check? { visibleChecks.first { $0.target == selection } }
     var progress: Double { domainCount == 0 ? 0 : Double(Set(rows.map(\.target)).count) / Double(domainCount) }
@@ -338,7 +338,7 @@ struct MonitorView: View {
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.white(0.1)))
                 .padding(.bottom, 8)
             Text("Follow a migration").font(.ui(17, .bold))
-            Text("Paste the migrated domains and the new server's IP. DNS Monitor checks each domain's A record on several resolvers and shows which ones already point at the new server.")
+            Text("Paste the migrated domains and the record they should have, such as the new server's IP. Propagation Checker asks several resolvers and shows which domains already have it.")
                 .font(.ui(13))
                 .foregroundStyle(Color.white(0.5))
                 .multilineTextAlignment(.center)
@@ -511,7 +511,7 @@ private struct MonitorTable: View {
         .onTapGesture { monitor.selection = selected ? nil : check.target }
         .contextMenu {
             Button("Show Details") { monitor.selection = check.target }
-            Button("Look Up in Results") { session.lookUpInResults(check.target) }
+            Button("Open in Bulk Lookup") { session.lookUpInResults(check.target) }
             Button("Copy Domain") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(check.target, forType: .string)
@@ -600,8 +600,8 @@ private struct MonitorDetail: View {
                 }
                 divider
                 VStack(alignment: .leading, spacing: 8) {
-                    SecondaryButton(title: "Look Up in Results", height: 26, size: 12.5) { session.lookUpInResults(check.target) }
-                    Text("Runs a full lookup of this domain in Results with the monitor's servers.").font(.ui(11)).foregroundStyle(Color.white(0.45))
+                    SecondaryButton(title: "Open in Bulk Lookup", height: 26, size: 12.5) { session.lookUpInResults(check.target) }
+                    Text("Runs a full lookup of this domain in Bulk Lookup with the same servers.").font(.ui(11)).foregroundStyle(Color.white(0.45))
                 }
                 .padding(20)
             }
@@ -663,7 +663,7 @@ struct MonitorSheet: View {
                     .disabled(monitor.targetsText.isEmpty)
                     .opacity(monitor.targetsText.isEmpty ? 0.5 : 1)
                 SmallButton(title: "New Session") { monitor.newSession() }
-                    .help("Start an unsaved monitor with no domains, no expected IPs, and the public resolvers")
+                    .help("Start an unsaved check with no domains, no expected values, and the public resolvers")
                 savedButton
                 SmallButton(title: "Load from File…") { monitor.importing = true }
             }
@@ -713,7 +713,7 @@ struct MonitorSheet: View {
             }
         } footer: {
             if let name = monitor.savingName {
-                TextField("Monitor name", text: Binding { name } set: { monitor.savingName = $0 })
+                TextField("Check name", text: Binding { name } set: { monitor.savingName = $0 })
                     .textFieldStyle(.plain)
                     .font(.ui(12.5))
                     .fieldStyle(focused: true)
@@ -722,7 +722,7 @@ struct MonitorSheet: View {
                 SecondaryButton(title: "Save", action: save)
             } else {
                 HoverButton(action: { monitor.savingName = monitor.name ?? "" }, hover: .accent.opacity(0.12), radius: 6) {
-                    Text("Save Monitor…").font(.ui(13)).foregroundStyle(Color.accentText).padding(.horizontal, 12).frame(height: 26)
+                    Text("Save Check…").font(.ui(13)).foregroundStyle(Color.accentText).padding(.horizontal, 12).frame(height: 26)
                 }
             }
             Spacer()
@@ -763,7 +763,7 @@ struct MonitorSheet: View {
         case .record(.aaaa): "IPv6 addresses of the new server, separated by commas"
         case _ where monitor.kind.isHost: "Host names, such as \(example), separated by commas"
         case _ where monitor.kind.isText: "Text the record must contain; separate several with commas"
-        default: "Record data as Results shows it, separated by commas"
+        default: "Record data as Bulk Lookup shows it, separated by commas"
         }
     }
 
@@ -782,7 +782,7 @@ struct MonitorSheet: View {
     private var savedButton: some View {
         HoverButton(action: { monitor.showingSavedMenu.toggle() }, normal: .white(0.1), hover: .white(0.14), radius: 6) {
             HStack(spacing: 6) {
-                Text(monitor.name ?? "Saved Monitors")
+                Text(monitor.name ?? "Saved Checks")
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(Color.white(0.6))
             }
             .font(.ui(12))
@@ -796,7 +796,7 @@ struct MonitorSheet: View {
                 Panel(background: .menu) {
                     VStack(alignment: .leading, spacing: 0) {
                         if monitor.saved.isEmpty {
-                            Text("No saved monitors").font(.ui(13)).foregroundStyle(Color.t3).padding(.horizontal, 9).frame(height: 24)
+                            Text("No saved checks").font(.ui(13)).foregroundStyle(Color.t3).padding(.horizontal, 9).frame(height: 24)
                         }
                         ForEach(monitor.saved, id: \.name) { saved in
                             MenuItem(label: saved.name) {

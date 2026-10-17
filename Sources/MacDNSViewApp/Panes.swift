@@ -374,7 +374,7 @@ struct WatchView: View {
     }
 
     private var note: String {
-        if session.autoRefresh > 0 { return "Changes between runs are logged in the session below and marked with a blue dot in Results. Pick Off to end it." }
+        if session.autoRefresh > 0 { return "Changes between runs are logged in the session below and marked with a blue dot in Bulk Lookup. Pick Off to end it." }
         return session.targetsText.isEmpty ? "Run a lookup first, then pick an interval." : "Pick an interval to repeat \(name). Each watch is recorded as a session below."
     }
 
@@ -453,7 +453,7 @@ struct HistoryView: View {
 
     @ViewBuilder private func menu(_ entry: HistoryEntry) -> some View {
         let targets = session.historySelection.contains(entry.id) ? session.historySelection : [entry.id]
-        Button("Open Results") { session.openResults(entry) }.disabled(!session.hasStoredRows(entry))
+        Button("Open in Bulk Lookup") { session.openResults(entry) }.disabled(!session.hasStoredRows(entry))
         Button("Look Up Again") { session.rerun(entry) }
         Divider()
         Button(targets.count == 1 ? "Export Results…" : "Export Results of \(targets.count) Lookups…") { session.exportHistory(targets) }

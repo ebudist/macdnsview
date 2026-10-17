@@ -30,3 +30,11 @@ _Avoid_: split DNS server, supplemental resolver
 **Lookup options**:
 The record types and follow-up rules chosen for a run, such as reverse lookup of IP addresses found in answers.
 _Avoid_: settings, DNS options
+
+**Bulk Lookup**:
+The tool that looks up many Targets at once and shows every Record, with the Lookup options and Servers the user chose.
+_Avoid_: Results (the pane's old name)
+
+**Propagation Checker**:
+The Migration tool that checks each domain's answers for one record type against the expected values on several Servers and gives each domain a status, such as Migrated or Pending.
+_Avoid_: DNS Monitor, comparator

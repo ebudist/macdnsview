@@ -11,7 +11,7 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 if session.showingSidebar {
                     Sidebar(session: session)
-                        .frame(width: 216)
+                        .frame(width: 252)
                         .background(Color.sidebar)
                         .overlay(alignment: .trailing) { Rectangle().fill(.black.opacity(0.55)).frame(width: 1) }
                 }
@@ -114,11 +114,11 @@ private struct Sidebar: View {
             .frame(height: 52)
             .padding(.trailing, 2)
             heading("Lookup").padding(.top, 4)
-            item("Results", "list.bullet", .results, badge: session.rows.isEmpty ? nil : String(session.rows.count))
+            item("Bulk Lookup", "list.bullet", .results, badge: session.rows.isEmpty ? nil : String(session.rows.count))
             item("Watch", "waveform.path.ecg", .watch, badge: session.autoRefresh == 0 ? nil : intervalName(session.autoRefresh), live: true)
             item("History", "clock.arrow.circlepath", .history, badge: nil)
             heading("Migration").padding(.top, 12)
-            item("DNS Monitor", "arrow.left.arrow.right.circle", .monitor, badge: monitorBadge, live: session.monitor.interval > 0)
+            item("Propagation Checker", "arrow.left.arrow.right.circle", .monitor, badge: monitorBadge, live: session.monitor.interval > 0)
             ForEach(session.monitor.saved, id: \.name) { saved in savedMonitor(saved) }
             HStack {
                 heading("Saved Lists")
