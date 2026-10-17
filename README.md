@@ -15,6 +15,7 @@ Status: early releases. Expect rough edges.
 - Any DNS server, including DNS over HTTPS and DNS over TLS, several at once with disagreements marked, or the system configuration including VPN scoped servers.
 - TTL, response section, answering server, and response time on every row.
 - Export to CSV, TSV, JSON, plain text, and HTML.
+- Propagation Checker for migrations: list the domains and the record they should have, such as the new server's IP, and see on several resolvers which ones already have it, with a timer that stops once every domain is done.
 - CLI for scripts: `macdnsview example.com 1.1.1.1 --type A,MX --format json`
 
 ## Install
