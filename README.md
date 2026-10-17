@@ -15,8 +15,9 @@ Status: early releases. Expect rough edges.
 - Any DNS server, including DNS over HTTPS and DNS over TLS, several at once with disagreements marked, or the system configuration including VPN scoped servers.
 - TTL, response section, answering server, and response time on every row.
 - Export to CSV, TSV, JSON, plain text, and HTML.
-- Propagation Checker for migrations: list the domains and the record they should have, such as the new server's IP, and see on several resolvers which ones already have it, with a timer that stops once every domain is done.
+- Propagation Checker for migrations: list the domains and the record they should have, such as the new server's IP, and see on several resolvers which ones already have it, with a timer that stops once every domain is done. It also checks the www name, warns about AAAA answers left on another server, imports a `domain,old,new` CSV, and keeps a timeline of each run.
 - CLI for scripts: `macdnsview example.com 1.1.1.1 --type A,MX --format json`
+- Migration checks in scripts: `macdnsview --expect 203.0.113.10 --previous 198.51.100.7 -s 1.1.1.1,8.8.8.8 -f domains.txt` prints one status per domain and exits 0 only when every domain is Migrated.
 
 ## Install
 
@@ -52,7 +53,7 @@ scripts/bundle.sh    # universal MacDNSView.app and CLI, zipped into dist/
 
 ## Credits
 
-Inspired by [DNSDataView](https://www.nirsoft.net/utils/dns_records_viewer.html) by Nir Sofer, which is Windows only. MacDNSView is an independent reimplementation and is not affiliated with NirSoft.
+Bulk Lookup is inspired by [DNSDataView](https://www.nirsoft.net/utils/dns_records_viewer.html) by Nir Sofer, which is Windows only. Watch, History, Propagation Checker, and the CLI are MacDNSView's own. MacDNSView is an independent reimplementation and is not affiliated with NirSoft.
 
 ## License
 
