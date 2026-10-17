@@ -309,25 +309,28 @@ struct HistoryView: View {
     var body: some View {
         GeometryReader { geo in
             let widths = widths(geo.size.width - 16)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 0) {
-                        ForEach(Array(Self.columns.enumerated()), id: \.offset) { i, column in
-                            Text(column.0).padding(.horizontal, 10).frame(width: widths[i], alignment: column.0 == "Rows" ? .trailing : .leading)
-                        }
-                    }
-                    .font(.ui(11.5, .semibold))
-                    .foregroundStyle(Color.white(0.5))
-                    .frame(height: 30)
-                    .overlay(alignment: .bottom) { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
-                    ForEach(session.history) { entry in HistoryRow(entry: entry, widths: widths) { session.rerun(entry) } }
-                    if session.history.isEmpty {
-                        Text("No lookups yet").font(.ui(13)).foregroundStyle(Color.white(0.4)).frame(maxWidth: .infinity).padding(.vertical, 80)
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 0) {
+                    ForEach(Array(Self.columns.enumerated()), id: \.offset) { i, column in
+                        Text(column.0).padding(.horizontal, 10).frame(width: widths[i], alignment: column.0 == "Rows" ? .trailing : .leading)
                     }
                 }
+                .font(.ui(11.5, .semibold))
+                .foregroundStyle(Color.white(0.5))
+                .frame(height: 30)
+                .overlay(alignment: .bottom) { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
                 .padding(.horizontal, 8)
                 .padding(.top, 8)
-                .padding(.bottom, 16)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(session.history) { entry in HistoryRow(entry: entry, widths: widths) { session.rerun(entry) } }
+                        if session.history.isEmpty {
+                            Text("No lookups yet").font(.ui(13)).foregroundStyle(Color.white(0.4)).frame(maxWidth: .infinity).padding(.vertical, 80)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 16)
+                }
             }
         }
     }
