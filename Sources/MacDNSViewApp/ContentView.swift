@@ -193,7 +193,10 @@ private struct Header: View {
                 .padding(.leading, 70)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.ui(13, .bold)).foregroundStyle(Color.white(0.9))
+                HStack(spacing: 2) {
+                    Text(title).font(.ui(13, .bold)).foregroundStyle(Color.white(0.9))
+                    if session.pane == .results { renameButton }
+                }
                 Text(subtitle).font(.ui(11)).foregroundStyle(Color.white(0.5)).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -217,7 +220,7 @@ private struct Header: View {
 
     private var title: String {
         switch session.pane {
-        case .results: session.currentList ?? "Results"
+        case .results: session.currentList ?? "Untitled lookup"
         case .watch: "Watch"
         case .history: "History"
         }
@@ -233,6 +236,38 @@ private struct Header: View {
             let types = RecordType.lookupOrder.filter(session.options.types.contains).map(\.description) + (session.options.dmarc ? ["DMARC"] : [])
             let server = session.serverText.trimmingCharacters(in: .whitespaces)
             return "\(targets) targets · \(types.joined(separator: ", ")) · \(server.isEmpty ? "System resolver" : server)"
+        }
+    }
+
+    private var renameButton: some View {
+        IconButton(symbol: "pencil", color: session.popover == .rename ? .accentText : .white(0.45), size: 11, width: 20, height: 18,
+                   help: session.currentList == nil ? "Name this lookup and save it as a list" : "Rename this lookup") {
+            session.lookupName = session.currentList ?? ""
+            session.popover = session.popover == .rename ? nil : .rename
+        }
+        .overlay(alignment: .topLeading) {
+            if session.popover == .rename {
+                Panel(radius: 10, padding: 0) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(session.currentList == nil ? "Save Lookup As" : "Rename Lookup").font(.ui(12, .bold))
+                        HStack(spacing: 8) {
+                            TextField("Lookup name", text: $session.lookupName)
+                                .textFieldStyle(.plain)
+                                .font(.ui(12.5))
+                                .fieldStyle(focused: true)
+                                .onSubmit { session.nameLookup() }
+                            SecondaryButton(title: "Save") { session.nameLookup() }
+                                .disabled(session.lookupName.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                        Text("Saved as a list in the sidebar with the current Targets, Server, and options.")
+                            .font(.ui(11)).foregroundStyle(Color.white(0.45)).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                }
+                .frame(width: 300)
+                .offset(x: -8, y: 24)
+            }
         }
     }
 

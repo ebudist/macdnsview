@@ -12,6 +12,7 @@ final class Session {
     var exportFormat = ExportFormat.csv
     var exportSelected = false
     var savingName: String?
+    var lookupName = ""
     var copiedCommand = false
     var pane = Pane.results
     var onlyDiffers = false
@@ -134,6 +135,18 @@ final class Session {
         problem = nil
         savingName = ""
         showingSheet = true
+    }
+
+    func nameLookup() {
+        let name = lookupName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        if let current = currentList, savedLists.contains(where: { $0.name == current }) {
+            renameList(current, to: name)
+        } else {
+            saveList(as: name)
+        }
+        popover = nil
+        flash("Saved \u{201C}\(name)\u{201D}")
     }
 
     func newSession() {
@@ -328,7 +341,7 @@ extension Session {
 
 enum Pane: Hashable { case results, watch, history }
 
-enum Popover { case autoRefresh, filter, lists, differsHint, cloudflareHint }
+enum Popover { case autoRefresh, filter, lists, differsHint, cloudflareHint, rename }
 
 struct SortKey: Equatable {
     var column: String
