@@ -23,6 +23,7 @@ struct ContentView: View {
                             case .results: ResultsView(session: session)
                             case .watch: WatchView(session: session)
                             case .history: HistoryView(session: session)
+                            case .monitor: MonitorView(session: session)
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -41,10 +42,11 @@ struct ContentView: View {
                     }
                 }
             }
-            if session.showingSheet || session.showingExport {
+            if session.showingSheet || session.showingExport || session.monitor.showingSetup {
                 Color.black.opacity(0.38)
                     .onTapGesture { session.closeOverlays() }
                 Group {
+                    if session.monitor.showingSetup { MonitorSheet(session: session, monitor: session.monitor).frame(width: 640) }
                     if session.showingSheet { TargetsSheet(session: session).frame(width: 640) }
                     if session.showingExport { ExportSheet(session: session).frame(width: 580) }
                 }
@@ -66,14 +68,14 @@ struct ContentView: View {
                 }
                 .transition(.opacity)
             }
-            if session.showingSheet || session.showingExport || session.popover != nil {
+            if session.showingSheet || session.showingExport || session.monitor.showingSetup || session.popover != nil {
                 Button("") { session.closeOverlays() }.keyboardShortcut(.cancelAction).hidden()
             } else if session.pane == .results {
                 Button("") { session.select(offset: 1) }.keyboardShortcut(.downArrow, modifiers: []).hidden()
                 Button("") { session.select(offset: -1) }.keyboardShortcut(.upArrow, modifiers: []).hidden()
             }
         }
-        .animation(.easeOut(duration: 0.16), value: session.showingSheet || session.showingExport)
+        .animation(.easeOut(duration: 0.16), value: session.showingSheet || session.showingExport || session.monitor.showingSetup)
         .animation(.easeOut(duration: 0.15), value: session.toast)
         .font(.ui(13))
         .foregroundStyle(Color.t1)
@@ -115,6 +117,9 @@ private struct Sidebar: View {
             item("Results", "list.bullet", .results, badge: session.rows.isEmpty ? nil : String(session.rows.count))
             item("Watch", "waveform.path.ecg", .watch, badge: session.autoRefresh == 0 ? nil : intervalName(session.autoRefresh), live: true)
             item("History", "clock.arrow.circlepath", .history, badge: nil)
+            heading("Migration").padding(.top, 12)
+            item("DNS Monitor", "arrow.left.arrow.right.circle", .monitor, badge: monitorBadge)
+            ForEach(session.monitor.saved, id: \.name) { saved in savedMonitor(saved) }
             HStack {
                 heading("Saved Lists")
                 Spacer()
@@ -129,6 +134,37 @@ private struct Sidebar: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
+    }
+
+    private var monitorBadge: String? {
+        let checks = session.monitor.checks
+        return checks.isEmpty ? nil : "\(session.monitor.count(.migrated))/\(checks.count)"
+    }
+
+    private func savedMonitor(_ saved: SavedMonitor) -> some View {
+        let on = session.monitor.name == saved.name && session.pane == .monitor
+        return HoverButton(action: {
+            session.monitor.load(saved)
+            session.pane = .monitor
+            session.monitor.run()
+        }, normal: on ? .white(0.08) : .clear, hover: .white(0.06), radius: 6) {
+            HStack(spacing: 9) {
+                Image(systemName: "bookmark").font(.system(size: 11, weight: .medium)).foregroundStyle(on ? Color.accentText : .t3).frame(width: 16)
+                Text(saved.name).lineLimit(1).truncationMode(.tail).foregroundStyle(on ? Color.white : .t1)
+                Spacer(minLength: 0)
+                Text(String(Migration.parse(saved.targets).count)).font(.ui(11)).monospacedDigit().foregroundStyle(Color.white(0.35))
+            }
+            .font(.ui(12.5))
+            .padding(.leading, 24)
+            .padding(.trailing, 8)
+            .frame(height: 28)
+        }
+        .contextMenu {
+            Button("Rename…") {
+                if let name = askName("Rename \(saved.name) to", initial: saved.name, button: "Rename") { session.monitor.rename(saved.name, to: name) }
+            }
+            Button("Delete", role: .destructive) { session.monitor.delete(saved.name) }
+        }
     }
 
     private func heading(_ text: String) -> some View {
@@ -203,16 +239,19 @@ private struct Header: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if session.pane == .results { controls }
             if session.pane == .history { historyControls }
+            if session.pane == .monitor { monitorControls }
         }
         .padding(.leading, session.showingSidebar ? 20 : 0)
         .padding(.trailing, 12)
         .frame(height: 52)
         .overlay(alignment: .bottom) { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
         .overlay(alignment: .bottomLeading) {
-            if session.isRunning {
+            let running = session.pane == .monitor ? session.monitor.isRunning : session.isRunning
+            let progress = session.pane == .monitor ? session.monitor.progress : session.progress
+            if running {
                 GeometryReader { geo in
-                    Rectangle().fill(Color.accent).frame(width: geo.size.width * session.progress, height: 2)
-                        .animation(.linear(duration: 0.1), value: session.progress)
+                    Rectangle().fill(Color.accent).frame(width: geo.size.width * progress, height: 2)
+                        .animation(.linear(duration: 0.1), value: progress)
                 }
                 .frame(height: 2)
                 .offset(y: 1)
@@ -225,19 +264,57 @@ private struct Header: View {
         case .results: session.currentList ?? "Untitled lookup"
         case .watch: "Watch"
         case .history: "History"
+        case .monitor: session.monitor.title
         }
     }
 
     private var subtitle: String {
         switch session.pane {
         case .watch: return "Repeat the lookup on a timer and mark what changed"
+        case .monitor:
+            let monitor = session.monitor
+            let count = monitor.entries.count
+            guard count > 0 else { return "Check whether migrated domains point at the new server" }
+            let new = monitor.newIPs.sorted().joined(separator: ", ")
+            return "\(count) domains · new \(new.isEmpty ? "per domain" : new)" + (monitor.oldIPs.isEmpty ? "" : " · old \(monitor.oldIPs.sorted().joined(separator: ", "))")
         case .history: return session.historySelection.isEmpty ? "\(session.history.count) lookups" : "\(session.history.count) lookups · \(session.historySelection.count) selected"
         case .results:
             guard !session.targetsText.isEmpty else { return "Look up DNS records for many names at once" }
             let targets = Target.parse(session.targetsText, extractHostFromURL: session.options.extractHostFromURL).count
             let types = RecordType.lookupOrder.filter(session.options.types.contains).map(\.description) + (session.options.dmarc ? ["DMARC"] : [])
             let server = session.serverText.trimmingCharacters(in: .whitespaces)
-            return "\(targets) targets · \(types.joined(separator: ", ")) · \(server.isEmpty ? "System resolver" : server)"
+            return "\(targets) target\(targets == 1 ? "" : "s") · \(types.joined(separator: ", ")) · \(server.isEmpty ? "System resolver" : server)"
+        }
+    }
+
+    private var monitorControls: some View {
+        let monitor = session.monitor
+        return HStack(spacing: 8) {
+            HoverButton(action: session.openMonitorSetup, normal: .accent, hover: .accentHover, radius: 7) {
+                HStack(spacing: 6) {
+                    Image(systemName: "slider.horizontal.3").font(.system(size: 12, weight: .semibold))
+                    Text("Set Up").font(.ui(13, .medium))
+                }
+                .foregroundStyle(.white)
+                .padding(.leading, 9)
+                .padding(.trailing, 11)
+                .frame(height: 28)
+            }
+            .help("Domains, expected IPs, and servers")
+            HStack(spacing: 0) {
+                if monitor.isRunning {
+                    IconButton(symbol: "stop.fill", color: .bad, help: "Stop") { monitor.stop() }
+                } else {
+                    IconButton(symbol: "arrow.clockwise", help: "Check every domain again") {
+                        if monitor.problemText() == nil { monitor.run() } else { session.openMonitorSetup() }
+                    }
+                    .disabled(monitor.entries.isEmpty)
+                    .opacity(monitor.entries.isEmpty ? 0.4 : 1)
+                }
+            }
+            .padding(.horizontal, 2)
+            .frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color.white(0.06)))
         }
     }
 

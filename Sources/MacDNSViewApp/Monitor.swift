@@ -1,0 +1,622 @@
+import AppKit
+import MacDNSViewCore
+import Observation
+import SwiftUI
+
+@MainActor @Observable
+final class Monitor {
+    static let defaultServers = "1.1.1.1, 8.8.8.8, 9.9.9.9"
+
+    var targetsText: String { didSet { defaults.set(targetsText, forKey: "monitor.targets") } }
+    var newText: String { didSet { defaults.set(newText, forKey: "monitor.new") } }
+    var oldText: String { didSet { defaults.set(oldText, forKey: "monitor.old") } }
+    var serverText: String { didSet { defaults.set(serverText, forKey: "monitor.server") } }
+    var name: String? { didSet { defaults.set(name, forKey: "monitor.name") } }
+    var saved: [SavedMonitor] { didSet { defaults.set(try? JSONEncoder().encode(saved), forKey: "monitor.saved") } }
+
+    var showingSetup = false
+    var showingSavedMenu = false
+    var savingName: String?
+    var problem: String?
+    var filter: MigrationStatus?
+    var selection: String?
+
+    private(set) var rows: [Row] = []
+    private(set) var checks: [Migration.Check] = []
+    private(set) var isRunning = false
+    private(set) var lastRun: Date?
+    private(set) var domainCount = 0
+    private var task: Task<Void, Never>?
+    private let defaults = UserDefaults.standard
+
+    init() {
+        targetsText = defaults.string(forKey: "monitor.targets") ?? ""
+        newText = defaults.string(forKey: "monitor.new") ?? ""
+        oldText = defaults.string(forKey: "monitor.old") ?? ""
+        serverText = defaults.string(forKey: "monitor.server") ?? Self.defaultServers
+        name = defaults.string(forKey: "monitor.name")
+        saved = defaults.data(forKey: "monitor.saved").flatMap { try? JSONDecoder().decode([SavedMonitor].self, from: $0) } ?? []
+    }
+
+    var entries: [Migration.Entry] { Migration.parse(targetsText) }
+    var newIPs: Set<String> { Set(Migration.addresses(newText)) }
+    var oldIPs: Set<String> { Set(Migration.addresses(oldText)) }
+    var title: String { name ?? "DNS Monitor" }
+    var visibleChecks: [Migration.Check] { checks.filter { filter == nil || $0.status == filter } }
+    var selectedCheck: Migration.Check? { visibleChecks.first { $0.target == selection } }
+    var progress: Double { domainCount == 0 ? 0 : Double(Set(rows.map(\.target)).count) / Double(domainCount) }
+
+    func count(_ status: MigrationStatus) -> Int { checks.filter { $0.status == status }.count }
+
+    func problemText() -> String? {
+        let entries = self.entries
+        if entries.isEmpty { return "Add at least one domain, one per line." }
+        let bad = (Migration.addresses(newText) + Migration.addresses(oldText)).filter { !Migration.isAddress($0) }
+        if let first = bad.first { return "\(first) is not an IP address." }
+        if newIPs.isEmpty, let missing = entries.first(where: { $0.expected.isEmpty }) {
+            return "Add the new server's IP, or put one after \(missing.target.display)."
+        }
+        let servers = serverText.trimmingCharacters(in: .whitespaces)
+        if !servers.isEmpty, (try? Server.list(parsing: servers)) == nil {
+            return "\(servers) has a server that is not an IP address or a host name that resolves."
+        }
+        return nil
+    }
+
+    func run() {
+        task?.cancel()
+        let entries = self.entries
+        guard !entries.isEmpty else { return }
+        var options = LookupOptions()
+        options.types = [.a]
+        options.reverseLookupAddresses = false
+        options.hideAdditional = true
+        let lookup = Lookup(options: options, servers: (try? Server.list(parsing: serverText)) ?? [])
+        let (new, old) = (newIPs, oldIPs)
+        rows = []
+        domainCount = entries.count
+        isRunning = true
+        task = Task {
+            for await row in lookup.stream(entries.map(\.target)) {
+                guard !Task.isCancelled else { return }
+                rows.append(row)
+            }
+            guard !Task.isCancelled else { return }
+            rows = Lookup.canonical(rows)
+            checks = entries.map { Migration.check($0.target.display, rows: rows, new: $0.expected.isEmpty ? new : Set($0.expected), old: old) }
+            lastRun = Date()
+            isRunning = false
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        isRunning = false
+    }
+
+    func save(as name: String) {
+        saved.removeAll { $0.name == name }
+        saved.append(SavedMonitor(name: name, targets: targetsText, new: newText, old: oldText, server: serverText))
+        saved.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        self.name = name
+    }
+
+    func load(_ monitor: SavedMonitor) {
+        targetsText = monitor.targets
+        newText = monitor.new
+        oldText = monitor.old
+        serverText = monitor.server
+        name = monitor.name
+        checks = []
+        rows = []
+        selection = nil
+    }
+
+    func rename(_ old: String, to new: String) {
+        guard let monitor = saved.first(where: { $0.name == old }) else { return }
+        saved.removeAll { $0.name == old || $0.name == new }
+        saved.append(SavedMonitor(name: new, targets: monitor.targets, new: monitor.new, old: monitor.old, server: monitor.server))
+        saved.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        if name == old { name = new }
+    }
+
+    func delete(_ name: String) {
+        saved.removeAll { $0.name == name }
+        if self.name == name { self.name = nil }
+    }
+}
+
+struct SavedMonitor: Codable {
+    let name: String
+    let targets: String
+    let new: String
+    let old: String
+    let server: String
+}
+
+extension MigrationStatus {
+    var color: Color {
+        switch self {
+        case .migrated: .ok
+        case .propagating: .accentText
+        case .pending: .warn
+        case .unexpected: Color(hex: 0xBF5AF2)
+        case .proxied: .cloudflare
+        case .failed: .bad
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .migrated: "checkmark.circle.fill"
+        case .propagating: "arrow.triangle.2.circlepath"
+        case .pending: "clock"
+        case .unexpected: "exclamationmark.triangle.fill"
+        case .proxied: "cloud.fill"
+        case .failed: "xmark.octagon.fill"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .migrated: "Every server answers with the new IP"
+        case .propagating: "Some servers already answer with the new IP, others still with the old one"
+        case .pending: "Every server still answers with the old IP"
+        case .unexpected: "An answer is neither the new nor the old IP"
+        case .proxied: "The answers are Cloudflare IPs, so the origin server cannot be confirmed from DNS"
+        case .failed: "No A answer: NXDOMAIN, timeout, or no record"
+        }
+    }
+}
+
+struct StatusPill: View {
+    let status: MigrationStatus
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: status.symbol).font(.system(size: 10, weight: .semibold))
+            Text(status.rawValue).font(.ui(11.5, .semibold))
+        }
+        .foregroundStyle(status.color)
+        .padding(.horizontal, 8)
+        .frame(height: 20)
+        .background(Capsule().fill(status.color.opacity(0.15)))
+        .help(status.help)
+    }
+}
+
+struct MonitorView: View {
+    @Bindable var session: Session
+    private var monitor: Monitor { session.monitor }
+
+    var body: some View {
+        if monitor.checks.isEmpty, !monitor.isRunning {
+            emptyState
+        } else {
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    summary
+                    Rectangle().fill(Color.white(0.06)).frame(height: 1)
+                    MonitorTable(monitor: monitor, session: session)
+                    statusBar
+                }
+                if let check = monitor.selectedCheck {
+                    MonitorDetail(check: check, monitor: monitor, session: session)
+                        .frame(width: 320)
+                        .background(Color.inspector)
+                        .overlay(alignment: .leading) { Rectangle().fill(Color.white(0.08)).frame(width: 1) }
+                }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "arrow.left.arrow.right.circle")
+                .font(.system(size: 36, weight: .light))
+                .foregroundStyle(Color.accentText)
+                .frame(width: 72, height: 72)
+                .background(RoundedRectangle(cornerRadius: 16).fill(Color(hex: 0x201E1D)))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.white(0.1)))
+                .padding(.bottom, 8)
+            Text("Follow a migration").font(.ui(17, .bold))
+            Text("Paste the migrated domains and the new server's IP. DNS Monitor checks each domain's A record on several resolvers and shows which ones already point at the new server.")
+                .font(.ui(13))
+                .foregroundStyle(Color.white(0.5))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+            PrimaryButton(height: 28, radius: 7, action: session.openMonitorSetup) { Text("Set Up…") }
+                .padding(.top, 10)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var summary: some View {
+        let total = monitor.checks.count
+        let migrated = monitor.count(.migrated)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(monitor.isRunning && total == 0 ? "Checking \(monitor.domainCount) domains…" : "\(migrated) of \(total) point to the new server")
+                    .font(.ui(15, .bold))
+                Spacer()
+                if total > 0 { Text("\(Int((Double(migrated) / Double(total) * 100).rounded()))%").font(.ui(13, .semibold)).foregroundStyle(Color.ok).monospacedDigit() }
+            }
+            GeometryReader { geo in
+                HStack(spacing: 0) {
+                    ForEach(MigrationStatus.allCases, id: \.self) { status in
+                        let count = monitor.count(status)
+                        if count > 0 { Rectangle().fill(status.color).frame(width: geo.size.width * CGFloat(count) / CGFloat(max(total, 1))) }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.white(0.08))
+                .clipShape(Capsule())
+            }
+            .frame(height: 6)
+            SegmentedBar(segments: [Segment(id: "all", label: "All", count: String(total), on: monitor.filter == nil) { monitor.filter = nil }] +
+                MigrationStatus.allCases.map { status in
+                    Segment(id: status.rawValue, label: status.rawValue, count: String(monitor.count(status)), help: status.help, on: monitor.filter == status) {
+                        monitor.filter = monitor.filter == status ? nil : status
+                    }
+                })
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    private var statusBar: some View {
+        HStack(spacing: 8) {
+            if monitor.isRunning { Spinner() }
+            Text(statusText).foregroundStyle(Color.t2)
+            Spacer(minLength: 0)
+        }
+        .font(.ui(11.5))
+        .lineLimit(1)
+        .padding(.horizontal, 14)
+        .frame(height: 28)
+        .background(Color.statusBar)
+        .overlay(alignment: .top) { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
+    }
+
+    private var statusText: String {
+        let servers = (try? Server.list(parsing: monitor.serverText))?.count ?? 0
+        var parts = ["\(monitor.domainCount) domains", servers == 0 ? "system resolver" : "\(servers) server\(servers == 1 ? "" : "s")"]
+        if monitor.isRunning { parts.append("checking") } else if let last = monitor.lastRun { parts.append("checked at \(last.formatted(date: .omitted, time: .standard))") }
+        if monitor.filter != nil { parts.append("\(monitor.visibleChecks.count) shown") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+private struct MonitorTable: View {
+    let monitor: Monitor
+    let session: Session
+
+    private static let columns: [(String, CGFloat?, CGFloat)] = [("Status", 130, 0), ("Domain", nil, 1.1), ("Expected", nil, 0.9), ("Answers by server", nil, 2), ("TTL", 60, 0)]
+
+    var body: some View {
+        GeometryReader { geo in
+            let widths = widths(geo.size.width - 16)
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    ForEach(Array(Self.columns.enumerated()), id: \.offset) { i, column in
+                        Text(column.0).padding(.horizontal, 8).frame(width: widths[i], alignment: column.0 == "TTL" ? .trailing : .leading)
+                    }
+                }
+                .font(.ui(11.5, .semibold))
+                .foregroundStyle(Color.white(0.5))
+                .frame(height: 28)
+                .overlay(alignment: .bottom) { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
+                .padding(.horizontal, 8)
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(monitor.visibleChecks.enumerated()), id: \.element.target) { k, check in
+                            row(check, odd: k % 2 == 1, widths: widths)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    private func row(_ check: Migration.Check, odd: Bool, widths: [CGFloat]) -> some View {
+        let selected = monitor.selection == check.target
+        return HStack(spacing: 0) {
+            StatusPill(status: check.status).padding(.horizontal, 8).frame(width: widths[0], alignment: .leading)
+            Text(check.target).fontWeight(.medium).foregroundStyle(Color.white(0.92)).cell(widths[1])
+            Text(check.expected.joined(separator: ", ")).font(.mono(12)).foregroundStyle(Color.t2).cell(widths[2])
+            answers(check).cell(widths[3])
+            Text(check.ttl.map(String.init) ?? "").font(.mono(12)).foregroundStyle(Color.t2).cell(widths[4], trailing: true)
+        }
+        .font(.ui(12))
+        .frame(height: 28)
+        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accent.opacity(0.32) : odd ? .white(0.025) : .clear))
+        .contentShape(Rectangle())
+        .onTapGesture { monitor.selection = selected ? nil : check.target }
+        .contextMenu {
+            Button("Show Details") { monitor.selection = check.target }
+            Button("Look Up in Results") { session.lookUpInResults(check.target) }
+            Button("Copy Domain") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(check.target, forType: .string)
+            }
+        }
+    }
+
+    @ViewBuilder private func answers(_ check: Migration.Check) -> some View {
+        if let error = check.error {
+            Text(error).font(.mono(12)).foregroundStyle(Color.bad)
+        } else {
+            let groups = Dictionary(grouping: check.answers.keys.sorted()) { Set(check.answers[$0]!) }
+                .sorted { $0.value.count > $1.value.count || $0.value.count == $1.value.count && $0.value[0] < $1.value[0] }
+            HStack(spacing: 12) {
+                ForEach(groups, id: \.value) { ips, servers in
+                    let sorted = ips.sorted()
+                    HStack(spacing: 5) {
+                        Text(sorted.count > 1 ? "\(sorted[0]) +\(sorted.count - 1)" : sorted[0]).foregroundStyle(answerColor(sorted, check: check))
+                        Text(groups.count == 1 ? "all \(servers.count)" : servers.joined(separator: ", ")).font(.ui(11)).foregroundStyle(Color.t3)
+                    }
+                    .help("\(sorted.joined(separator: ", ")) from \(servers.joined(separator: ", "))")
+                }
+            }
+            .font(.mono(11.5))
+        }
+    }
+
+    private func answerColor(_ ips: [String], check: Migration.Check) -> Color {
+        if ips.allSatisfy(check.expected.contains) { return .ok }
+        if ips.allSatisfy(monitor.oldIPs.contains) { return .warn }
+        if ips.allSatisfy({ Cloudflare.range(of: $0) != nil }) { return .cloudflare }
+        return check.status == .unexpected ? MigrationStatus.unexpected.color : .t1
+    }
+
+    private func widths(_ total: CGFloat) -> [CGFloat] {
+        let fixed = Self.columns.compactMap(\.1).reduce(0, +)
+        let fractions = Self.columns.map(\.2).reduce(0, +)
+        return Self.columns.map { $0.1 ?? max(80, (total - fixed) * $0.2 / fractions) }
+    }
+}
+
+private extension View {
+    func cell(_ width: CGFloat, trailing: Bool = false) -> some View {
+        lineLimit(1).truncationMode(.tail).padding(.horizontal, 8).frame(width: width, alignment: trailing ? .trailing : .leading)
+    }
+}
+
+private struct MonitorDetail: View {
+    let check: Migration.Check
+    let monitor: Monitor
+    let session: Session
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(check.target).font(.ui(18, .bold)).textSelection(.enabled)
+                    StatusPill(status: check.status)
+                    Text(check.status.help).font(.ui(12)).foregroundStyle(Color.white(0.6)).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(20)
+                divider
+                section("Expected") {
+                    field("New", check.expected.joined(separator: ", "), .ok)
+                    field("Old", monitor.oldIPs.sorted().joined(separator: ", "), .warn)
+                    field("Lowest TTL", check.ttl.map { "\($0) s" } ?? "", .t1)
+                }
+                divider
+                section("Answers by server") {
+                    if let error = check.error {
+                        Text(error).font(.mono(12)).foregroundStyle(Color.bad)
+                    }
+                    ForEach(check.answers.keys.sorted(), id: \.self) { server in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(server).font(.ui(11.5, .semibold)).foregroundStyle(Color.white(0.6))
+                            ForEach(check.answers[server]!, id: \.self) { ip in
+                                HStack(spacing: 6) {
+                                    Text(ip).font(.mono(12)).textSelection(.enabled)
+                                    Text(label(ip)).font(.ui(11)).foregroundStyle(labelColor(ip))
+                                }
+                            }
+                        }
+                    }
+                }
+                divider
+                VStack(alignment: .leading, spacing: 8) {
+                    SecondaryButton(title: "Look Up in Results", height: 26, size: 12.5) { session.lookUpInResults(check.target) }
+                    Text("Runs a full lookup of this domain in Results with the monitor's servers.").font(.ui(11)).foregroundStyle(Color.white(0.45))
+                }
+                .padding(20)
+            }
+        }
+    }
+
+    private var divider: some View { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
+
+    private func label(_ ip: String) -> String {
+        if check.expected.contains(ip) { return "new" }
+        if monitor.oldIPs.contains(ip) { return "old" }
+        if Cloudflare.range(of: ip) != nil { return "Cloudflare" }
+        return "unexpected"
+    }
+
+    private func labelColor(_ ip: String) -> Color {
+        switch label(ip) {
+        case "new": .ok
+        case "old": .warn
+        case "Cloudflare": .cloudflare
+        default: MigrationStatus.unexpected.color
+        }
+    }
+
+    private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(title).font(.ui(12, .bold))
+            content()
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+    }
+
+    private func field(_ label: String, _ value: String, _ color: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label).foregroundStyle(Color.white(0.5)).frame(width: 84, alignment: .leading)
+            Text(value.isEmpty ? "None" : value).font(.mono(12)).foregroundStyle(value.isEmpty ? Color.t3 : color).textSelection(.enabled)
+        }
+        .font(.ui(12.5))
+    }
+}
+
+struct MonitorSheet: View {
+    @Bindable var session: Session
+    @Bindable var monitor: Monitor
+
+    var body: some View {
+        SheetPanel {
+            HStack(spacing: 8) {
+                Text("DNS Monitor").font(.ui(13, .bold)).frame(maxWidth: .infinity, alignment: .leading)
+                SmallButton(title: "Clear") { monitor.targetsText = ""; monitor.problem = nil }
+                    .disabled(monitor.targetsText.isEmpty)
+                    .opacity(monitor.targetsText.isEmpty ? 0.5 : 1)
+                savedButton
+            }
+            .zIndex(1)
+            VStack(alignment: .leading, spacing: 6) {
+                TextEditor(text: $monitor.targetsText)
+                    .font(.mono(12.5))
+                    .lineSpacing(4)
+                    .scrollContentBackground(.hidden)
+                    .foregroundStyle(Color.white(0.9))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 7)
+                    .frame(height: 150)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.field))
+                    .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white(0.12)))
+                    .overlay(alignment: .topLeading) {
+                        if monitor.targetsText.isEmpty {
+                            Text("One domain per line. To expect a different IP for one domain, put it after the domain:\nexample.com 203.0.113.20")
+                                .font(.mono(12.5)).foregroundStyle(Color.white(0.3)).padding(.horizontal, 11).padding(.vertical, 9).allowsHitTesting(false)
+                        }
+                    }
+                    .onChange(of: monitor.targetsText) { monitor.problem = nil }
+                Text(hint).font(.ui(11.5)).foregroundStyle(Color.white(0.45))
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                field("New server", "IP addresses, separated by commas", $monitor.newText)
+                field("Old server", "Optional, to tell old answers from unexpected ones", $monitor.oldText)
+                field("Servers", "Resolvers to ask, separated by commas", $monitor.serverText)
+                HStack(spacing: 6) {
+                    ForEach([("Public resolvers", Monitor.defaultServers), ("System", "")], id: \.0) { label, value in
+                        let on = monitor.serverText.replacingOccurrences(of: " ", with: "") == value.replacingOccurrences(of: " ", with: "")
+                        Button { monitor.serverText = value } label: {
+                            Text(label).font(.ui(11.5)).foregroundStyle(on ? Color.accentText : .t2)
+                                .padding(.horizontal, 9).frame(height: 22)
+                                .background(Capsule().fill(on ? Color.accent.opacity(0.18) : .clear))
+                                .overlay(Capsule().strokeBorder(on ? Color.accent.opacity(0.6) : .white(0.14)))
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .help(value.isEmpty ? "System configuration, including VPN scoped servers" : value)
+                    }
+                }
+                .padding(.leading, 108)
+                if let problem = monitor.problem {
+                    Text(problem).font(.ui(12)).foregroundStyle(Color.problem).padding(.leading, 108)
+                }
+            }
+        } footer: {
+            if let name = monitor.savingName {
+                TextField("Monitor name", text: Binding { name } set: { monitor.savingName = $0 })
+                    .textFieldStyle(.plain)
+                    .font(.ui(12.5))
+                    .fieldStyle(focused: true)
+                    .frame(width: 180)
+                    .onSubmit(save)
+                SecondaryButton(title: "Save", action: save)
+            } else {
+                HoverButton(action: { monitor.savingName = monitor.name ?? "" }, hover: .accent.opacity(0.12), radius: 6) {
+                    Text("Save Monitor…").font(.ui(13)).foregroundStyle(Color.accentText).padding(.horizontal, 12).frame(height: 26)
+                }
+            }
+            Spacer()
+            SecondaryButton(title: "Cancel") { session.closeOverlays() }
+            PrimaryButton(action: start) {
+                HStack(spacing: 8) {
+                    Text("Check Now")
+                    Text("⌘↩").font(.ui(11)).opacity(0.7)
+                }
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+        }
+    }
+
+    private var hint: String {
+        let entries = monitor.entries
+        guard !entries.isEmpty else { return "Lines starting with # are ignored. Only A records are checked." }
+        let own = entries.filter { !$0.expected.isEmpty }.count
+        return "\(entries.count) domain\(entries.count == 1 ? "" : "s")" + (own == 0 ? "" : " · \(own) with their own IP")
+    }
+
+    private func field(_ label: String, _ prompt: String, _ text: Binding<String>) -> some View {
+        HStack(spacing: 12) {
+            formLabel(label)
+            TextField(prompt, text: text)
+                .textFieldStyle(.plain)
+                .font(.mono(12))
+                .foregroundStyle(Color.white(0.9))
+                .fieldStyle()
+                .onChange(of: text.wrappedValue) { monitor.problem = nil }
+        }
+    }
+
+    private var savedButton: some View {
+        HoverButton(action: { monitor.showingSavedMenu.toggle() }, normal: .white(0.1), hover: .white(0.14), radius: 6) {
+            HStack(spacing: 6) {
+                Text(monitor.name ?? "Saved Monitors")
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(Color.white(0.6))
+            }
+            .font(.ui(12))
+            .foregroundStyle(Color.t1)
+            .padding(.leading, 10)
+            .padding(.trailing, 8)
+            .frame(height: 24)
+        }
+        .overlay(alignment: .topTrailing) {
+            if monitor.showingSavedMenu {
+                Panel(background: .menu) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if monitor.saved.isEmpty {
+                            Text("No saved monitors").font(.ui(13)).foregroundStyle(Color.t3).padding(.horizontal, 9).frame(height: 24)
+                        }
+                        ForEach(monitor.saved, id: \.name) { saved in
+                            MenuItem(label: saved.name) {
+                                monitor.load(saved)
+                                monitor.showingSavedMenu = false
+                            }
+                        }
+                    }
+                }
+                .frame(width: 200)
+                .offset(y: 28)
+            }
+        }
+    }
+
+    private func start() {
+        if let problem = monitor.problemText() {
+            monitor.problem = problem
+            return
+        }
+        monitor.savingName = nil
+        session.closeOverlays()
+        monitor.run()
+    }
+
+    private func save() {
+        guard let name = monitor.savingName?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { return }
+        monitor.save(as: name)
+        monitor.savingName = nil
+        session.flash("Saved \u{201C}\(name)\u{201D}")
+    }
+}

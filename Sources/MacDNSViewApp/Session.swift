@@ -6,6 +6,7 @@ import SwiftUI
 /// Everything the window shows. Views hold no `@State`: in the macOS 27 SDK it is a macro whose plugin ships only with Xcode.
 @MainActor @Observable
 final class Session {
+    let monitor = Monitor()
     var showingSheet = false
     var showingInspector = true
     var showingExport = false
@@ -116,6 +117,11 @@ final class Session {
     @discardableResult func closeOverlays() -> Bool {
         if popover != nil {
             popover = nil
+        } else if monitor.showingSavedMenu {
+            monitor.showingSavedMenu = false
+        } else if monitor.showingSetup {
+            monitor.showingSetup = false
+            monitor.savingName = nil
         } else if showingSheet || showingExport {
             if showingSheet, let before = beforeNewList {
                 targetsText = before.targets
@@ -130,6 +136,21 @@ final class Session {
             return false
         }
         return true
+    }
+
+    func openMonitorSetup() {
+        popover = nil
+        monitor.problem = nil
+        monitor.savingName = nil
+        monitor.showingSetup = true
+    }
+
+    func lookUpInResults(_ domain: String) {
+        targetsText = domain
+        serverText = monitor.serverText
+        currentList = nil
+        run()
+        pane = .results
     }
 
     func flash(_ message: String) {
@@ -433,7 +454,7 @@ extension Session {
     }
 }
 
-enum Pane: Hashable { case results, watch, history }
+enum Pane: Hashable { case results, watch, history, monitor }
 
 enum Popover { case autoRefresh, filter, lists, differsHint, cloudflareHint, rename }
 

@@ -3,7 +3,7 @@ import MacDNSViewCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-private struct SheetPanel<Content: View, Footer: View>: View {
+struct SheetPanel<Content: View, Footer: View>: View {
     @ViewBuilder let content: () -> Content
     @ViewBuilder let footer: () -> Footer
 
@@ -24,7 +24,7 @@ private struct SheetPanel<Content: View, Footer: View>: View {
     }
 }
 
-private func formLabel(_ text: String) -> some View {
+func formLabel(_ text: String) -> some View {
     Text(text).font(.ui(13)).foregroundStyle(Color.white(0.7)).frame(width: 96, alignment: .leading)
 }
 
@@ -242,7 +242,7 @@ struct TargetsSheet: View {
     }
 }
 
-private struct SmallButton: View {
+struct SmallButton: View {
     let title: String
     let action: () -> Void
 
