@@ -36,7 +36,7 @@ public enum Migration {
         public let expected: [String]
     }
 
-    public struct Check: Equatable, Sendable {
+    public struct Check: Codable, Equatable, Sendable {
         public let target: String
         public let status: MigrationStatus
         public let expected: [String]

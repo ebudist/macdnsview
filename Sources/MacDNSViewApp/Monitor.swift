@@ -22,6 +22,9 @@ final class Monitor {
     var saved: [SavedMonitor] { didSet { defaults.set(try? JSONEncoder().encode(saved), forKey: "monitor.saved") } }
     private(set) var events: [MonitorEvent] { didSet { defaults.set(try? JSONEncoder().encode(events), forKey: "monitor.events") } }
     private(set) var migratedAt: [String: Date] { didSet { defaults.set(try? JSONEncoder().encode(migratedAt), forKey: "monitor.migratedAt") } }
+    private(set) var checks: [Migration.Check] { didSet { defaults.set(try? JSONEncoder().encode(checks), forKey: "monitor.checks") } }
+    private(set) var lastRun: Date? { didSet { defaults.set(lastRun, forKey: "monitor.lastRun") } }
+    private var states: [String: MonitorState] { didSet { defaults.set(try? JSONEncoder().encode(states), forKey: "monitor.states") } }
     var interval = 0 { didSet { schedule() } }
     private(set) var nextRun: Date?
     var flash: (String) -> Void = { _ in }
@@ -36,9 +39,7 @@ final class Monitor {
     var selection: String?
 
     private(set) var rows: [Row] = []
-    private(set) var checks: [Migration.Check] = []
     private(set) var isRunning = false
-    private(set) var lastRun: Date?
     private(set) var domainCount = 0
     private var task: Task<Void, Never>?
     private let defaults = UserDefaults.standard
@@ -53,6 +54,10 @@ final class Monitor {
         saved = defaults.data(forKey: "monitor.saved").flatMap { try? JSONDecoder().decode([SavedMonitor].self, from: $0) } ?? []
         events = defaults.data(forKey: "monitor.events").flatMap { try? JSONDecoder().decode([MonitorEvent].self, from: $0) } ?? []
         migratedAt = defaults.data(forKey: "monitor.migratedAt").flatMap { try? JSONDecoder().decode([String: Date].self, from: $0) } ?? [:]
+        checks = defaults.data(forKey: "monitor.checks").flatMap { try? JSONDecoder().decode([Migration.Check].self, from: $0) } ?? []
+        lastRun = defaults.object(forKey: "monitor.lastRun") as? Date
+        states = defaults.data(forKey: "monitor.states").flatMap { try? JSONDecoder().decode([String: MonitorState].self, from: $0) } ?? [:]
+        domainCount = checks.count
     }
 
     static let typeNames = ["A", "AAAA", "CNAME", "MX", "NS", "SOA", "SRV", "TXT", "CAA", "HTTPS", "SVCB", "DS", "DNSKEY", "DMARC"]
@@ -135,6 +140,7 @@ final class Monitor {
             if check.status == .migrated { migrated.append(check.target) }
         }
         events = Array(events.prefix(500))
+        stash()
         if !migrated.isEmpty {
             Notifier.post(migrated.count == 1 ? "\(migrated[0]) has the expected \(kind.name) record" : "\(migrated.count) domains have the expected \(kind.name) record",
                           migrated.count == 1 ? "\(count(.migrated)) of \(checks.count) done in \(title)." : migrated.joined(separator: ", "))
@@ -163,7 +169,15 @@ final class Monitor {
         }
     }
 
-    func clearEvents() { events = [] }
+    func clearEvents() {
+        events = []
+        stash()
+    }
+
+    private func stash() {
+        guard let name, saved.contains(where: { $0.name == name }) else { return }
+        states[name] = MonitorState(checks: checks, events: events, migratedAt: migratedAt, lastRun: lastRun)
+    }
 
     func stop() {
         task?.cancel()
@@ -175,21 +189,28 @@ final class Monitor {
         saved.append(SavedMonitor(name: name, targets: targetsText, new: newText, old: oldText, server: serverText, type: typeName))
         saved.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         self.name = name
+        stash()
     }
 
     func load(_ monitor: SavedMonitor) {
+        stash()
+        stop()
+        interval = 0
         targetsText = monitor.targets
         newText = monitor.new
         oldText = monitor.old
         serverText = monitor.server
         typeName = monitor.type ?? "A"
         name = monitor.name
-        interval = 0
-        checks = []
+        let state = states[monitor.name]
+        checks = state?.checks ?? []
+        events = state?.events ?? []
+        migratedAt = state?.migratedAt ?? [:]
+        lastRun = state?.lastRun
+        domainCount = checks.count
         rows = []
-        events = []
-        migratedAt = [:]
         selection = nil
+        filter = nil
     }
 
     private func reset() {
@@ -199,10 +220,12 @@ final class Monitor {
         rows = []
         events = []
         migratedAt = [:]
+        lastRun = nil
         selection = nil
     }
 
     func newSession() {
+        stash()
         stop()
         interval = 0
         targetsText = ""
@@ -215,6 +238,7 @@ final class Monitor {
         rows = []
         events = []
         migratedAt = [:]
+        lastRun = nil
         selection = nil
         filter = nil
         problem = nil
@@ -226,13 +250,22 @@ final class Monitor {
         saved.removeAll { $0.name == old || $0.name == new }
         saved.append(SavedMonitor(name: new, targets: monitor.targets, new: monitor.new, old: monitor.old, server: monitor.server, type: monitor.type))
         saved.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        states[new] = states.removeValue(forKey: old)
         if name == old { name = new }
     }
 
     func delete(_ name: String) {
         saved.removeAll { $0.name == name }
+        states[name] = nil
         if self.name == name { self.name = nil }
     }
+}
+
+struct MonitorState: Codable {
+    let checks: [Migration.Check]
+    let events: [MonitorEvent]
+    let migratedAt: [String: Date]
+    let lastRun: Date?
 }
 
 struct MonitorEvent: Codable, Identifiable {
@@ -449,7 +482,7 @@ struct MonitorView: View {
 
     private var statusText: String {
         let servers = (try? Server.list(parsing: monitor.serverText))?.count ?? 0
-        var parts = ["\(monitor.domainCount) domains", servers == 0 ? "system resolver" : "\(servers) server\(servers == 1 ? "" : "s")"]
+        var parts = ["\(monitor.domainCount) domain\(monitor.domainCount == 1 ? "" : "s")", servers == 0 ? "system resolver" : "\(servers) server\(servers == 1 ? "" : "s")"]
         if monitor.isRunning { parts.append("checking") } else if let last = monitor.lastRun { parts.append("checked at \(last.formatted(date: .omitted, time: .standard))") }
         if monitor.interval > 0, !monitor.isRunning, let next = monitor.nextRun {
             parts.append("next check at \(next.formatted(date: .omitted, time: .standard))")
