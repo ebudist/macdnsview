@@ -41,7 +41,7 @@ struct ResultsView: View {
             emptyState
         } else {
             VStack(spacing: 0) {
-                filterBar
+                filterBar.zIndex(1)
                 Rectangle().fill(Color.white(0.06)).frame(height: 1)
                 ResultsGrid(session: session)
                 statusBar
@@ -95,6 +95,8 @@ struct ResultsView: View {
             }
             .buttonStyle(.plain)
             .help("Only rows where servers differ")
+            .padding(.trailing, -8)
+            hint(.differsHint, title: "Differs", text: Self.differsHint)
             HStack(spacing: 7) {
                 Image(systemName: "cloud.fill").font(.system(size: 13)).foregroundStyle(Color.cloudflare)
                 Text("Cloudflare").font(.ui(12)).foregroundStyle(Color.white(0.7))
@@ -103,10 +105,36 @@ struct ResultsView: View {
                 }, padding: 9)
             }
             .help("Cloudflare: matched against cloudflare.com/ips and *.ns.cloudflare.com")
+            .padding(.trailing, -8)
+            hint(.cloudflareHint, title: "Cloudflare", text: Self.cloudflareHint)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
         .frame(height: 44)
+    }
+
+    private static let differsHint = "A row differs when you look up against two or more servers and this server's answer for the Target and record type is not the answer most servers gave. Turn the switch on to show only those rows. With one server nothing can differ."
+    private static let cloudflareHint = "Marks Targets served by Cloudflare: an A or AAAA answer inside Cloudflare's published IP ranges (cloudflare.com/ips), or an NS answer that is a cloudflare.com host. On shows only those Targets, Off hides them, Any shows everything. Only A, AAAA, and NS answers are checked, so a lookup of MX or TXT alone never finds Cloudflare."
+
+    private func hint(_ popover: Popover, title: String, text: String) -> some View {
+        IconButton(symbol: "questionmark.circle", color: session.popover == popover ? .accentText : .white(0.45), size: 12, width: 20, height: 20,
+                   help: "What is \(title)?") {
+            session.popover = session.popover == popover ? nil : popover
+        }
+        .overlay(alignment: .topLeading) {
+            if session.popover == popover {
+                Panel(radius: 10, padding: 0) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(title).font(.ui(12, .bold))
+                        Text(text).font(.ui(12)).foregroundStyle(Color.white(0.75)).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                }
+                .frame(width: 300)
+                .offset(x: -10, y: 26)
+            }
+        }
     }
 
     private var statusBar: some View {

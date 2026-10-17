@@ -308,7 +308,7 @@ extension Session {
 
 enum Pane: Hashable { case results, watch, history }
 
-enum Popover { case autoRefresh, filter, lists }
+enum Popover { case autoRefresh, filter, lists, differsHint, cloudflareHint }
 
 struct SortKey: Equatable {
     var column: String
