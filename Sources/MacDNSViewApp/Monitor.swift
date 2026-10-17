@@ -66,7 +66,7 @@ final class Monitor {
 
     func ordered(_ answers: some Sequence<String>, expected: [String]) -> [String] {
         answers.sorted { a, b in
-            let (x, y) = (Migration.classify(a, kind: kind, new: expected, old: oldValues) == .new, Migration.classify(b, kind: kind, new: expected, old: oldValues) == .new)
+            let (x, y) = (Migration.classify(a, kind: kind, new: expected, old: []) == .new, Migration.classify(b, kind: kind, new: expected, old: []) == .new)
             return x != y ? x : a < b
         }
     }
@@ -89,7 +89,7 @@ final class Monitor {
     func problemText() -> String? {
         let entries = self.entries
         if entries.isEmpty { return "Add at least one domain, one per line." }
-        if let bad = Migration.invalid(newValues + oldValues + entries.flatMap(\.expected), kind: kind) {
+        if let bad = Migration.invalid(newValues + oldValues + entries.flatMap { $0.expected + $0.previous }, kind: kind) {
             return switch kind {
             case .record(.a): "\(bad) is not an IPv4 address."
             case .record(.aaaa): "\(bad) is not an IPv6 address."
@@ -128,7 +128,9 @@ final class Monitor {
             guard !Task.isCancelled else { return }
             rows = Lookup.canonical(rows)
             let before = Dictionary(checks.map { ($0.target, $0.status) }, uniquingKeysWith: { a, _ in a })
-            checks = entries.map { Migration.check($0.target.display, rows: rows, kind: kind, new: $0.expected.isEmpty ? new : $0.expected, old: old) }
+            checks = entries.map {
+                Migration.check($0.target.display, rows: rows, kind: kind, new: $0.expected.isEmpty ? new : $0.expected, old: $0.previous.isEmpty ? old : $0.previous)
+            }
             lastRun = Date()
             isRunning = false
             record(before)
@@ -588,7 +590,7 @@ private struct MonitorTable: View {
     }
 
     private func answerColor(_ answers: [String], check: Migration.Check) -> Color {
-        let kinds = Set(answers.map { Migration.classify($0, kind: monitor.kind, new: check.expected, old: monitor.oldValues) })
+        let kinds = Set(answers.map { Migration.classify($0, kind: monitor.kind, new: check.expected, old: check.previous ?? []) })
         if kinds == [.new] { return .ok }
         if kinds == [.old] { return .warn }
         if kinds == [.cloudflare] { return .cloudflare }
@@ -637,7 +639,7 @@ private struct MonitorDetail: View {
                 divider
                 section("Expected \(monitor.kind.name)") {
                     field("Expected", check.expected.joined(separator: ", "), .ok)
-                    field("Previous", monitor.oldValues.joined(separator: ", "), .warn)
+                    field("Previous", (check.previous ?? []).joined(separator: ", "), .warn)
                     field("Lowest TTL", check.ttl.map { "\($0) s" } ?? "", .t1)
                 }
                 if let leftover = check.leftoverAAAA {
@@ -681,7 +683,7 @@ private struct MonitorDetail: View {
     private var divider: some View { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
 
     private func answer(_ text: String) -> Migration.Answer {
-        Migration.classify(text, kind: monitor.kind, new: check.expected, old: monitor.oldValues)
+        Migration.classify(text, kind: monitor.kind, new: check.expected, old: check.previous ?? [])
     }
 
     private func label(_ text: String) -> String {
@@ -751,7 +753,7 @@ struct MonitorSheet: View {
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white(0.12)))
                     .overlay(alignment: .topLeading) {
                         if monitor.targetsText.isEmpty {
-                            Text("One domain per line. To expect a different value for one domain, put it after the domain:\nexample.com \(example)")
+                            Text("One domain per line, or load a CSV of domain, old, new. To give one domain its own values, put them after it:\nexample.com \(example) | previous value")
                                 .font(.mono(12.5)).foregroundStyle(Color.white(0.3)).padding(.horizontal, 11).padding(.vertical, 9).allowsHitTesting(false)
                         }
                     }
@@ -821,7 +823,7 @@ struct MonitorSheet: View {
     private var hint: String {
         let entries = monitor.entries
         guard !entries.isEmpty else { return "Lines starting with # are ignored." }
-        let own = entries.filter { !$0.expected.isEmpty }.count
+        let own = entries.filter { !$0.expected.isEmpty || !$0.previous.isEmpty }.count
         return "\(entries.count) domain\(entries.count == 1 ? "" : "s")" + (own == 0 ? "" : " · \(own) with their own value")
     }
 
@@ -896,7 +898,12 @@ struct MonitorSheet: View {
         guard case .success(let url) = result else { return }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        do { monitor.targetsText = try String(contentsOf: url, encoding: .utf8) } catch { monitor.problem = error.localizedDescription }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            monitor.targetsText = url.pathExtension.lowercased() == "csv" ? Migration.lines(fromCSV: text) : text
+        } catch {
+            monitor.problem = error.localizedDescription
+        }
     }
 
     private func start() {

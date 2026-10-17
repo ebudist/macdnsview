@@ -120,9 +120,9 @@ final class Session {
     func exportMonitor() {
         let checks = monitor.visibleChecks
         guard !checks.isEmpty else { return }
-        let header = ["Domain", "Type", "Status", "Expected", "Answers", "Lowest TTL", "Migrated At", "Leftover AAAA", "Error"]
+        let header = ["Domain", "Type", "Status", "Expected", "Previous", "Answers", "Lowest TTL", "Migrated At", "Leftover AAAA", "Error"]
         let lines = checks.map { check in
-            [check.target, monitor.kind.name, check.status.rawValue, check.expected.joined(separator: " | "),
+            [check.target, monitor.kind.name, check.status.rawValue, check.expected.joined(separator: " | "), (check.previous ?? []).joined(separator: " | "),
              check.answers.keys.sorted().map { "\($0): \(check.answers[$0]!.joined(separator: " | "))" }.joined(separator: "; "),
              check.ttl.map(String.init) ?? "", monitor.migratedAt[check.target].map { $0.formatted(.iso8601) } ?? "",
              (check.leftoverAAAA ?? []).joined(separator: " | "), check.error ?? ""]

@@ -11,6 +11,9 @@ public enum CLI {
         public var output: String?
         public var timeout: Double = 3
         public var failOnDiff = false
+        public var expect: String?
+        public var previous: String?
+        public var typeGiven = false
         public var help = false
         public var version = false
     }
@@ -53,7 +56,11 @@ public enum CLI {
             case "-f", "--file": parsed.file = try value()
             case "-s", "--server": parsed.server = try value()
             case "-o", "--output": parsed.output = try value()
-            case "-t", "--type": try parseTypes(try value(), into: &parsed.options)
+            case "-t", "--type":
+                try parseTypes(try value(), into: &parsed.options)
+                parsed.typeGiven = true
+            case "--expect": parsed.expect = try value()
+            case "--previous": parsed.previous = try value()
             case "-F", "--format":
                 let name = try value()
                 guard let format = ExportFormat(rawValue: name.lowercased()) else {
@@ -108,6 +115,7 @@ public enum CLI {
             catch { return Result(status: 2, stderr: "macdnsview: cannot read \(file): \(error.localizedDescription)\n") }
         }
         if parsed.targets.isEmpty, parsed.file == nil, let input = stdin() { text = input }
+        if let expect = parsed.expect { return await check(parsed, text: text, expect: expect, configure: configure) }
         let targets = Target.parse(text, extractHostFromURL: parsed.options.extractHostFromURL)
         guard !targets.isEmpty else { return Result(status: 2, stderr: "macdnsview: no targets\nTry 'macdnsview --help'.\n") }
 
@@ -123,12 +131,66 @@ public enum CLI {
         let rows = await lookup.run(targets)
         let disagree = parsed.failOnDiff && rows.contains { $0.differs == true }
         let status: Int32 = rows.contains(where: \.isFailure) || disagree ? 1 : 0
-        let rendered = export(rows, as: parsed.format)
+        return write(export(rows, as: parsed.format), status: status, to: parsed.output)
+    }
 
-        guard let output = parsed.output else { return Result(status: status, stdout: rendered) }
+    private static func write(_ rendered: String, status: Int32, to output: String?) -> Result {
+        guard let output else { return Result(status: status, stdout: rendered) }
         do { try rendered.write(toFile: output, atomically: true, encoding: .utf8) }
         catch { return Result(status: 2, stderr: "macdnsview: cannot write \(output): \(error.localizedDescription)\n") }
         return Result(status: status)
+    }
+
+    private static func usage(_ message: String) -> Result {
+        Result(status: 2, stderr: "macdnsview: \(message)\nTry 'macdnsview --help'.\n")
+    }
+
+    private static func check(_ parsed: Arguments, text: String, expect: String, configure: (inout Lookup) -> Void) async -> Result {
+        let kind: Migration.Kind
+        let types = parsed.options.types
+        if !parsed.typeGiven {
+            kind = .record(.a)
+        } else if parsed.options.dmarc, types.isEmpty {
+            kind = .dmarc
+        } else if types.count == 1, !parsed.options.dmarc, let type = types.first {
+            kind = .record(type)
+        } else {
+            return usage("--expect checks one record type; pick it with -t, such as -t A or -t MX")
+        }
+        let entries = Migration.parse(text, kind: kind)
+        guard !entries.isEmpty else { return usage("no domains to check") }
+        let new = Migration.values(expect, kind: kind), old = Migration.values(parsed.previous ?? "", kind: kind)
+        if let bad = Migration.invalid(new + old + entries.flatMap { $0.expected + $0.previous }, kind: kind) {
+            return usage("\(bad) is not a valid \(kind.name) value")
+        }
+        if new.isEmpty, let missing = entries.first(where: { $0.expected.isEmpty }) {
+            return usage("no expected value for \(missing.target.display)")
+        }
+
+        var servers: [Server] = []
+        if let input = parsed.server {
+            do { servers = try Server.list(parsing: input) }
+            catch { return Result(status: 2, stderr: "macdnsview: bad server \(input): \(error)\n") }
+        }
+        var options = LookupOptions()
+        if case .record(let type) = kind { options.types = type == .a ? [.a, .aaaa] : [type] } else { options.types = []; options.dmarc = true }
+        options.reverseLookupAddresses = false
+        options.hideAdditional = true
+        let transport = Transport(timeout: .milliseconds(Int(parsed.timeout * 1000)))
+        var lookup = Lookup(options: options, servers: servers, transport: transport)
+        configure(&lookup)
+        let rows = await lookup.run(entries.map(\.target))
+        let checks = entries.map {
+            Migration.check($0.target.display, rows: rows, kind: kind, new: $0.expected.isEmpty ? new : $0.expected, old: $0.previous.isEmpty ? old : $0.previous)
+        }
+        let header = ["Domain", "Status", "Expected", "Answers", "Lowest TTL", "Leftover AAAA", "Error"]
+        let lines = checks.map { check in
+            [check.target, check.status.rawValue, check.expected.joined(separator: " | "),
+             check.answers.keys.sorted().map { "\($0): \(check.answers[$0]!.joined(separator: " | "))" }.joined(separator: "; "),
+             check.ttl.map(String.init) ?? "", (check.leftoverAAAA ?? []).joined(separator: " | "), check.error ?? ""]
+        }
+        let status: Int32 = checks.allSatisfy { $0.status == .migrated } ? 0 : 1
+        return write(export(header: header, lines: lines, as: parsed.format), status: status, to: parsed.output)
     }
 
     public static let help = """
@@ -157,11 +219,17 @@ public enum CLI {
           --hide-additional    Leave out records from the Additional section
           --no-url-extraction  Treat input with a slash as a name, not a URL
           --fail-on-diff       Exit 1 when the servers given with --server disagree
+          --expect VALUES      Check domains against the values they should have, one row per domain:
+                               Migrated, Propagating, Pending, Unexpected, Proxied, or Failed.
+                               One record type, A by default (-t to pick another). A line may give
+                               its own values: example.com 203.0.113.10 | 198.51.100.7
+          --previous VALUES    The old values, to tell answers not changed yet from unexpected ones
       -h, --help             Show this help
           --version          Show the version
 
     Exit status: 0 when every lookup answered (an empty answer counts), 1 when any failed
     or, with --fail-on-diff, when servers disagree, 2 for a usage or input problem.
+    With --expect: 0 when every domain is Migrated, 1 otherwise.
 
     Examples:
       macdnsview example.com 1.1.1.1
@@ -169,6 +237,7 @@ public enum CLI {
       pbpaste | macdnsview -s 9.9.9.9 -F json | jq '.[] | select(.error)'
       macdnsview -t A -s 1.1.1.1,8.8.8.8 --fail-on-diff www.example.com
       macdnsview -s https://cloudflare-dns.com/dns-query,tls://1.1.1.1 example.com
+      macdnsview --expect 203.0.113.10 --previous 198.51.100.7 -s 1.1.1.1,8.8.8.8 -f migrated.txt
 
     """
 }

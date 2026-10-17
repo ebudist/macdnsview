@@ -96,3 +96,24 @@ private func run(_ args: [String], stdin: String? = nil) async -> CLI.Result {
     #expect(strict.status == 1)
     #expect(strict.stdout.components(separatedBy: ",no,yes\n").count == 3)
 }
+
+@Test func expectChecksEachDomain() async {
+    let migrated = await run(["--expect", "192.0.2.1", "-s", "192.0.2.53", "example.com"])
+    #expect(migrated.status == 0)
+    #expect(migrated.stdout.hasPrefix("Domain       Status"))
+    #expect(migrated.stdout.contains("Migrated"))
+
+    let pending = await run(["--expect", "192.0.2.9", "--previous", "192.0.2.1", "-s", "192.0.2.53", "-F", "csv", "example.com", "nope.invalid"])
+    #expect(pending.status == 1)
+    #expect(pending.stdout.contains("example.com,Pending,192.0.2.9"))
+    #expect(pending.stdout.contains("nope.invalid,Failed"))
+
+    let override = await run(["--expect", "192.0.2.9", "-s", "192.0.2.53", "-F", "csv"], stdin: "example.com 192.0.2.1\n")
+    #expect(override.status == 0)
+}
+
+@Test func expectNeedsOneTypeAndValidValues() async {
+    #expect(await run(["--expect", "192.0.2.1", "-t", "A,MX", "example.com"]).stderr.contains("one record type"))
+    #expect(await run(["--expect", "not-an-ip", "example.com"]).stderr.contains("not-an-ip is not a valid A value"))
+    #expect(await run(["--expect", "mx.example.com", "-t", "MX", "-s", "192.0.2.53", "example.com"]).status == 1)
+}

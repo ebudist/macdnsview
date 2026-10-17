@@ -117,3 +117,22 @@ private let kindA = Migration.Kind.record(.a)
     #expect(Migration.check("x.com", rows: [a("x.com", "203.0.113.10")], kind: kindA, new: ["203.0.113.10"], old: []).leftoverAAAA == nil)
     #expect(Migration.invalid(["2001:db8::1"], kind: kindA) == nil)
 }
+
+@Test func migrationLinesCarryPreviousValuesAfterABar() {
+    let entries = Migration.parse("example.com 203.0.113.10 | 198.51.100.7, 198.51.100.8\nshop.com | 198.51.100.9", kind: kindA)
+    #expect(entries.map(\.expected) == [["203.0.113.10"], []])
+    #expect(entries.map(\.previous) == [["198.51.100.7", "198.51.100.8"], ["198.51.100.9"]])
+    let txt = Migration.parse("example.com include:_spf.new.com | include:_spf.old.com", kind: .record(.txt))
+    #expect(txt.first?.expected == ["include:_spf.new.com"])
+    #expect(txt.first?.previous == ["include:_spf.old.com"])
+}
+
+@Test func migrationImportsCSV() {
+    #expect(Migration.lines(fromCSV: "example.com,198.51.100.7,203.0.113.10\nshop.com,,203.0.113.11\r\n") ==
+            "example.com 203.0.113.10 | 198.51.100.7\nshop.com 203.0.113.11")
+    #expect(Migration.lines(fromCSV: "New IP,Domain,Old IP\n\"203.0.113.10; 203.0.113.12\",example.com,198.51.100.7\n,empty.com,\n") ==
+            "example.com 203.0.113.10; 203.0.113.12 | 198.51.100.7\nempty.com")
+    let entries = Migration.parse(Migration.lines(fromCSV: "domain,old,new\nexample.com,198.51.100.7,203.0.113.10"), kind: kindA)
+    #expect(entries.first?.expected == ["203.0.113.10"])
+    #expect(entries.first?.previous == ["198.51.100.7"])
+}

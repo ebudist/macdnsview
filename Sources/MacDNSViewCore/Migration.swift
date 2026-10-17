@@ -34,6 +34,7 @@ public enum Migration {
     public struct Entry: Equatable, Sendable {
         public let target: Target
         public let expected: [String]
+        public var previous: [String] = []
     }
 
     public struct Check: Codable, Equatable, Sendable {
@@ -44,6 +45,7 @@ public enum Migration {
         public let ttl: UInt32?
         public let error: String?
         public var leftoverAAAA: [String]?
+        public var previous: [String]?
     }
 
     public static func values(_ text: String, kind: Kind) -> [String] {
@@ -70,8 +72,10 @@ public enum Migration {
             let end = line.firstIndex(where: { ",; \t".contains($0) }) ?? line.endIndex
             let first = String(line[..<end])
             guard !first.hasPrefix("#"), let target = Target(first), target.kind == .name, seen.insert(target.queryName).inserted else { continue }
-            let rest = String(line[end...]).trimmingCharacters(in: CharacterSet(charactersIn: ",; \t"))
-            entries.append(Entry(target: target, expected: kind.isText ? (rest.isEmpty ? [] : [rest]) : values(rest, kind: kind)))
+            let parts = String(line[end...]).split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ",; \t")) }
+            func list(_ text: String) -> [String] { kind.isText ? (text.isEmpty ? [] : [text]) : values(text, kind: kind) }
+            entries.append(Entry(target: target, expected: list(parts.first ?? ""), previous: list(parts.count > 1 ? parts[1] : "")))
         }
         return entries
     }
@@ -81,8 +85,59 @@ public enum Migration {
         return entries.flatMap { entry -> [Entry] in
             guard !entry.target.display.hasPrefix("www."), let www = Target("www." + entry.target.display),
                   seen.insert(www.queryName).inserted else { return [entry] }
-            return [entry, Entry(target: www, expected: entry.expected)]
+            return [entry, Entry(target: www, expected: entry.expected, previous: entry.previous)]
         }
+    }
+
+    public static func lines(fromCSV text: String) -> String {
+        var rows = csvRows(text).filter { !$0.allSatisfy(\.isEmpty) }
+        guard let first = rows.first else { return "" }
+        let names = first.map { $0.lowercased().replacing(/[^a-z]/, with: "") }
+        func column(_ candidates: [String]) -> Int? { names.firstIndex { candidates.contains($0) } }
+        var (domain, old, new) = (0, 1, 2)
+        if let found = column(["domain", "target", "host", "name"]) {
+            domain = found
+            old = column(["old", "oldip", "previous", "from", "source"]) ?? -1
+            new = column(["new", "newip", "expected", "to", "destination"]) ?? -1
+            rows.removeFirst()
+        }
+        func cell(_ row: [String], _ index: Int) -> String { index >= 0 && index < row.count ? row[index] : "" }
+        return rows.map { row in
+            let (previous, expected) = (cell(row, old), cell(row, new))
+            return cell(row, domain) + (expected.isEmpty && previous.isEmpty ? "" : " " + expected) + (previous.isEmpty ? "" : " | " + previous)
+        }
+        .joined(separator: "\n")
+    }
+
+    static func csvRows(_ text: String) -> [[String]] {
+        var rows: [[String]] = [], row: [String] = [], field = "", quoted = false
+        var characters = text.makeIterator()
+        while let c = characters.next() {
+            if quoted {
+                if c == "\"" {
+                    if let next = characters.next() {
+                        if next == "\"" { field.append("\"") } else {
+                            quoted = false
+                            if next == "," { row.append(field); field = "" } else if next.isNewline { row.append(field); rows.append(row); row = []; field = "" } else { field.append(next) }
+                        }
+                    } else { quoted = false }
+                } else { field.append(c) }
+            } else if c == "\"", field.isEmpty {
+                quoted = true
+            } else if c == "," {
+                row.append(field.trimmingCharacters(in: .whitespaces))
+                field = ""
+            } else if c.isNewline {
+                row.append(field.trimmingCharacters(in: .whitespaces))
+                rows.append(row)
+                row = []
+                field = ""
+            } else {
+                field.append(c)
+            }
+        }
+        if !field.isEmpty || !row.isEmpty { row.append(field.trimmingCharacters(in: .whitespaces)); rows.append(row) }
+        return rows
     }
 
     static func text(_ row: Row, kind: Kind) -> String {
@@ -131,7 +186,8 @@ public enum Migration {
             leftover = left.isEmpty ? nil : left
         }
         func result(_ status: MigrationStatus, _ error: String? = nil) -> Check {
-            Check(target: target, status: status, expected: new, answers: byServer, ttl: ttl, error: error, leftoverAAAA: leftover)
+            Check(target: target, status: status, expected: new, answers: byServer, ttl: ttl, error: error, leftoverAAAA: leftover,
+                  previous: old.isEmpty ? nil : old)
         }
 
         guard !byServer.isEmpty else { return result(.failed, mine.first { $0.error != nil }?.error ?? "no \(kind.name) answer") }
