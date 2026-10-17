@@ -33,6 +33,20 @@ public func export(_ rows: [Row], as format: ExportFormat, columns: [Int] = Arra
     }
 }
 
+public func export(header: [String], lines: [[String]], as format: ExportFormat) -> String {
+    switch format {
+    case .table: return table(header, lines)
+    case .csv: return delimited(header, lines, separator: ",", escape: csvField)
+    case .tsv: return delimited(header, lines, separator: "\t") { $0.replacing(/[\t\r\n]/, with: " ") }
+    case .html: return html(header, lines, errors: lines.map { _ in false })
+    case .json:
+        let objects = lines.map { Dictionary(uniqueKeysWithValues: zip(header, $0)) }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return String(decoding: (try? encoder.encode(objects)) ?? Data(), as: UTF8.self) + "\n"
+    }
+}
+
 private func delimited(_ header: [String], _ lines: [[String]], separator: String, escape: (String) -> String) -> String {
     ([header] + lines)
         .map { $0.map(escape).joined(separator: separator) + "\n" }
