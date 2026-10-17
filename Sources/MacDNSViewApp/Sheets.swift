@@ -89,7 +89,18 @@ struct TargetsSheet: View {
                 }
             }
             HStack(alignment: .top, spacing: 12) {
-                formLabel("Record types").padding(.top, 3)
+                VStack(alignment: .leading, spacing: 6) {
+                    formLabel("Record types").padding(.top, 3)
+                    linkButton("Select All") {
+                        session.options.types = Set(Self.types)
+                        session.options.dmarc = true
+                        session.problem = nil
+                    }
+                    linkButton("Unselect All") {
+                        session.options.types = []
+                        session.options.dmarc = false
+                    }
+                }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 6) {
                     ForEach(Self.types, id: \.self) { type in
                         TypeChip(label: type.description, on: session.options.types.contains(type)) {
@@ -133,6 +144,11 @@ struct TargetsSheet: View {
             .keyboardShortcut(.return, modifiers: .command)
             .help("Look up (⌘↩)")
         }
+    }
+
+    private func linkButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Text(title).font(.ui(11.5)).foregroundStyle(Color.accentText) }
+            .buttonStyle(.plain)
     }
 
     private var listsButton: some View {
