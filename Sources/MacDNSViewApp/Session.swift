@@ -136,6 +136,26 @@ final class Session {
         showingSheet = true
     }
 
+    func newSession() {
+        task?.cancel()
+        autoRefresh = 0
+        targetsText = ""
+        serverText = ""
+        options = LookupOptions()
+        currentList = nil
+        beforeNewList = nil
+        rows = []
+        selection = []
+        changed = []
+        removed = []
+        previous = nil
+        isRunning = false
+        wasStopped = false
+        targetCount = 0
+        problem = nil
+        savingName = nil
+    }
+
     func showAllResults() {
         outcomes = Set(Outcome.allCases)
         onlyDiffers = false

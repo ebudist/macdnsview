@@ -47,6 +47,12 @@ struct TargetsSheet: View {
         SheetPanel {
             HStack(spacing: 8) {
                 Text("Targets").font(.ui(13, .bold)).frame(maxWidth: .infinity, alignment: .leading)
+                SmallButton(title: "Clear") { session.targetsText = ""; session.problem = nil }
+                    .help("Empty the Targets field")
+                    .disabled(session.targetsText.isEmpty)
+                    .opacity(session.targetsText.isEmpty ? 0.5 : 1)
+                SmallButton(title: "New Session") { session.newSession() }
+                    .help("Start an untitled lookup with empty Targets, the system resolver, and default options")
                 listsButton
                 SmallButton(title: "Load from File…") { session.importing = true }
             }
