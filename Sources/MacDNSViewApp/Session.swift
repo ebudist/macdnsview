@@ -11,6 +11,9 @@ final class Session {
     var showingExport = false
     var exportFormat = ExportFormat.csv
     var exportSelected = false
+    var exportSource: (title: String, rows: [Row])?
+    var historySelection = Set<UUID>()
+    var historyAnchor: UUID?
     var savingName: String?
     var lookupName = ""
     var copiedCommand = false
@@ -92,6 +95,7 @@ final class Session {
     func openExport() {
         popover = nil
         showingSheet = false
+        exportSource = nil
         showingExport = true
     }
 
@@ -106,6 +110,7 @@ final class Session {
             beforeNewList = nil
             showingSheet = false
             showingExport = false
+            exportSource = nil
             savingName = nil
         } else {
             return false
@@ -292,7 +297,62 @@ final class Session {
         let count = { (outcome: Outcome) in self.rows.filter { $0.outcome == outcome }.count }
         let entry = HistoryEntry(date: Date(), list: currentList, targets: targetsText, server: serverText, options: options,
                                  targetCount: targetCount, rows: rows.count, ok: count(.ok), noData: count(.noData), failed: count(.failed))
-        history = Array(([entry] + history).prefix(50))
+        try? FileManager.default.createDirectory(at: Self.historyFolder, withIntermediateDirectories: true)
+        try? JSONEncoder().encode(rows).write(to: Self.rowsFile(entry.id))
+        let all = [entry] + history
+        deleteRows(all.dropFirst(50).map(\.id))
+        history = Array(all.prefix(50))
+    }
+
+    static let historyFolder = URL.applicationSupportDirectory.appending(path: "MacDNSView/History", directoryHint: .isDirectory)
+
+    static func rowsFile(_ id: UUID) -> URL { historyFolder.appending(path: "\(id.uuidString).json") }
+
+    func storedRows(_ entry: HistoryEntry) -> [Row]? {
+        (try? Data(contentsOf: Self.rowsFile(entry.id))).flatMap { try? JSONDecoder().decode([Row].self, from: $0) }
+    }
+
+    func hasStoredRows(_ entry: HistoryEntry) -> Bool { FileManager.default.fileExists(atPath: Self.rowsFile(entry.id).path) }
+
+    private func deleteRows(_ ids: [UUID]) {
+        for id in ids { try? FileManager.default.removeItem(at: Self.rowsFile(id)) }
+    }
+
+    func deleteHistory(_ ids: Set<UUID>) {
+        deleteRows(Array(ids))
+        history.removeAll { ids.contains($0.id) }
+        historySelection.subtract(ids)
+    }
+
+    func openResults(_ entry: HistoryEntry) {
+        guard let stored = storedRows(entry) else { return }
+        task?.cancel()
+        targetsText = entry.targets
+        serverText = entry.server
+        options = entry.options
+        currentList = entry.list
+        rows = stored
+        selection = []
+        changed = []
+        removed = []
+        previous = nil
+        isRunning = false
+        wasStopped = false
+        targetCount = entry.targetCount
+        finishedAt = entry.date
+        pane = .results
+    }
+
+    func exportHistory(_ ids: Set<UUID>) {
+        let entries = history.filter { ids.contains($0.id) }
+        var combined = entries.flatMap { storedRows($0) ?? [] }
+        guard !combined.isEmpty else { return }
+        for i in combined.indices { combined[i].index = i + 1 }
+        let title = entries.count == 1 ? (entries[0].list ?? "Untitled lookup") : "\(entries.count) lookups"
+        popover = nil
+        showingSheet = false
+        exportSource = (title, combined)
+        showingExport = true
     }
 
     func load(_ url: URL) throws {

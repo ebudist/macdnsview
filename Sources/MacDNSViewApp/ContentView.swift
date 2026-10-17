@@ -202,6 +202,7 @@ private struct Header: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if session.pane == .results { controls }
+            if session.pane == .history { historyControls }
         }
         .padding(.leading, session.showingSidebar ? 20 : 0)
         .padding(.trailing, 12)
@@ -230,13 +231,46 @@ private struct Header: View {
     private var subtitle: String {
         switch session.pane {
         case .watch: return "Repeat the lookup on a timer and mark what changed"
-        case .history: return "\(session.history.count) lookups"
+        case .history: return session.historySelection.isEmpty ? "\(session.history.count) lookups" : "\(session.history.count) lookups · \(session.historySelection.count) selected"
         case .results:
             guard !session.targetsText.isEmpty else { return "Look up DNS records for many names at once" }
             let targets = Target.parse(session.targetsText, extractHostFromURL: session.options.extractHostFromURL).count
             let types = RecordType.lookupOrder.filter(session.options.types.contains).map(\.description) + (session.options.dmarc ? ["DMARC"] : [])
             let server = session.serverText.trimmingCharacters(in: .whitespaces)
             return "\(targets) targets · \(types.joined(separator: ", ")) · \(server.isEmpty ? "System resolver" : server)"
+        }
+    }
+
+    private var historyControls: some View {
+        let selected = session.historySelection
+        let exportable = session.history.contains { selected.contains($0.id) && session.hasStoredRows($0) }
+        return HStack(spacing: 8) {
+            HStack(spacing: 0) {
+                textButton(selected.count == session.history.count && !selected.isEmpty ? "Unselect All" : "Select All") {
+                    session.historySelection = selected.count == session.history.count ? [] : Set(session.history.map(\.id))
+                }
+                .disabled(session.history.isEmpty)
+                IconButton(symbol: "square.and.arrow.up", help: "Export the results of the selected lookups") { session.exportHistory(selected) }
+                    .disabled(!exportable)
+                    .opacity(exportable ? 1 : 0.4)
+                IconButton(symbol: "trash", help: "Delete the selected lookups") { confirmDelete(session, selected) }
+                    .disabled(selected.isEmpty)
+                    .opacity(selected.isEmpty ? 0.4 : 1)
+            }
+            .padding(.horizontal, 2)
+            .frame(height: 28)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color.white(0.06)))
+            textButton("Delete All…") { confirmDelete(session, Set(session.history.map(\.id))) }
+                .disabled(session.history.isEmpty)
+                .padding(.horizontal, 2)
+                .frame(height: 28)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white(0.06)))
+        }
+    }
+
+    private func textButton(_ title: String, action: @escaping () -> Void) -> some View {
+        HoverButton(action: action) {
+            Text(title).font(.ui(12.5)).foregroundStyle(Color.white(0.8)).padding(.horizontal, 10).frame(height: 24)
         }
     }
 

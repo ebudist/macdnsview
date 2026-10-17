@@ -72,3 +72,8 @@ private let rows = [
     #expect(Set(parsed[0].keys) == ["target", "time_ms", "error"])
     #expect(parsed[2]["error"] as? String == "NXDOMAIN")
 }
+
+@Test func rowsSurviveAJSONRoundTrip() throws {
+    let decoded = try JSONDecoder().decode([Row].self, from: JSONEncoder().encode(rows))
+    #expect(decoded == rows)
+}

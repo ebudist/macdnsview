@@ -27,7 +27,7 @@ public struct RecordType: Hashable, Sendable, CustomStringConvertible {
     public var description: String { Self.names[rawValue] ?? "TYPE\(rawValue)" }
 }
 
-public enum Section: String, Sendable {
+public enum Section: String, Codable, Sendable {
     case answer = "Answer"
     case authority = "Authority"
     case additional = "Additional"

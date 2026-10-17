@@ -29,7 +29,7 @@ extension RecordType {
 }
 
 /// One Record or Error row, shaped for the results table.
-public struct Row: Equatable, Identifiable, Sendable {
+public struct Row: Codable, Equatable, Identifiable, Sendable {
     public var index: Int
     public let target: String
     public let type: RecordType

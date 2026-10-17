@@ -284,7 +284,8 @@ struct ExportSheet: View {
     ]
 
     private var rows: [Row] {
-        (session.exportSelected && !session.selectedRows.isEmpty ? session.selectedRows : session.visibleRows).map { $0.with(data: $0.value) }
+        (session.exportSource?.rows ?? (session.exportSelected && !session.selectedRows.isEmpty ? session.selectedRows : session.visibleRows))
+            .map { $0.with(data: $0.value) }
     }
     private var columns: [Int] { ResultsColumn.all.indices.filter { session.visibleColumns.contains(ResultsColumn.all[$0].id) } }
     private var format: (String, ExportFormat, String, UTType) { Self.formats.first { $0.1 == session.exportFormat } ?? Self.formats[0] }
@@ -301,11 +302,15 @@ struct ExportSheet: View {
                 }
                 HStack(spacing: 12) {
                     formLabel("Rows")
-                    HStack(spacing: 18) {
-                        radio("Selected row\(session.selectedRows.isEmpty ? "" : " (\(session.selectedRows.count))")", on: session.exportSelected && !session.selectedRows.isEmpty,
-                              disabled: session.selectedRows.isEmpty) { session.exportSelected = true }
-                        radio("All shown rows (\(session.visibleRows.count))", on: !session.exportSelected || session.selectedRows.isEmpty, disabled: false) {
-                            session.exportSelected = false
+                    if let source = session.exportSource {
+                        Text("All rows from \(source.title) in History (\(source.rows.count))").font(.ui(12.5)).foregroundStyle(Color.white(0.85))
+                    } else {
+                        HStack(spacing: 18) {
+                            radio("Selected row\(session.selectedRows.isEmpty ? "" : " (\(session.selectedRows.count))")", on: session.exportSelected && !session.selectedRows.isEmpty,
+                                  disabled: session.selectedRows.isEmpty) { session.exportSelected = true }
+                            radio("All shown rows (\(session.visibleRows.count))", on: !session.exportSelected || session.selectedRows.isEmpty, disabled: false) {
+                                session.exportSelected = false
+                            }
                         }
                     }
                 }
@@ -334,7 +339,7 @@ struct ExportSheet: View {
         } footer: {
             Text("\(rows.count) row\(rows.count == 1 ? "" : "s") · visible columns").font(.ui(12)).foregroundStyle(Color.white(0.45))
             Spacer()
-            SecondaryButton(title: "Cancel") { session.showingExport = false }
+            SecondaryButton(title: "Cancel") { session.closeOverlays() }
             PrimaryButton(action: save) { Text("Export…") }
                 .keyboardShortcut(.defaultAction)
         }
@@ -366,7 +371,7 @@ struct ExportSheet: View {
             guard response == .OK, let url = panel.url else { return }
             do {
                 try export(rows, as: format, columns: columns).write(to: url, atomically: true, encoding: .utf8)
-                session.showingExport = false
+                session.closeOverlays()
                 session.flash("Exported \(rows.count) rows as \(url.lastPathComponent)")
             } catch {
                 NSAlert(error: error).runModal()

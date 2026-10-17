@@ -303,7 +303,7 @@ struct WatchView: View {
 struct HistoryView: View {
     @Bindable var session: Session
 
-    private static let columns: [(String, CGFloat?, CGFloat)] = [("When", 130, 0), ("List", nil, 1.2), ("Targets", 70, 0), ("Types", nil, 1),
+    private static let columns: [(String, CGFloat?, CGFloat)] = [("", 30, 0), ("When", 130, 0), ("List", nil, 1.2), ("Targets", 70, 0), ("Types", nil, 1),
                                                                   ("Servers", nil, 1.2), ("Rows", 60, 0), ("Results", nil, 1.3)]
 
     var body: some View {
@@ -312,7 +312,14 @@ struct HistoryView: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 0) {
                     ForEach(Array(Self.columns.enumerated()), id: \.offset) { i, column in
-                        Text(column.0).padding(.horizontal, 10).frame(width: widths[i], alignment: column.0 == "Rows" ? .trailing : .leading)
+                        if i == 0 {
+                            HistoryCheckbox(on: !session.history.isEmpty && session.historySelection.count == session.history.count) {
+                                session.historySelection = session.historySelection.count == session.history.count ? [] : Set(session.history.map(\.id))
+                            }
+                            .frame(width: widths[i])
+                        } else {
+                            Text(column.0).padding(.horizontal, 10).frame(width: widths[i], alignment: column.0 == "Rows" ? .trailing : .leading)
+                        }
                     }
                 }
                 .font(.ui(11.5, .semibold))
@@ -323,7 +330,14 @@ struct HistoryView: View {
                 .padding(.top, 8)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(session.history) { entry in HistoryRow(entry: entry, widths: widths) { session.rerun(entry) } }
+                        ForEach(session.history) { entry in
+                            HistoryRow(entry: entry, widths: widths, selected: session.historySelection.contains(entry.id), stored: session.hasStoredRows(entry)) {
+                                click(entry)
+                            } toggle: {
+                                if session.historySelection.contains(entry.id) { session.historySelection.remove(entry.id) } else { session.historySelection.insert(entry.id) }
+                            }
+                            .contextMenu { menu(entry) }
+                        }
                         if session.history.isEmpty {
                             Text("No lookups yet").font(.ui(13)).foregroundStyle(Color.white(0.4)).frame(maxWidth: .infinity).padding(.vertical, 80)
                         }
@@ -335,6 +349,39 @@ struct HistoryView: View {
         }
     }
 
+    private func click(_ entry: HistoryEntry) {
+        if NSApp.currentEvent?.clickCount == 2 {
+            if session.hasStoredRows(entry) { session.openResults(entry) } else { session.rerun(entry) }
+            return
+        }
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            if session.historySelection.contains(entry.id) { session.historySelection.remove(entry.id) } else { session.historySelection.insert(entry.id) }
+        } else if flags.contains(.shift), let anchor = session.history.firstIndex(where: { $0.id == session.historyAnchor }),
+                  let index = session.history.firstIndex(where: { $0.id == entry.id }) {
+            session.historySelection.formUnion(session.history[min(anchor, index)...max(anchor, index)].map(\.id))
+            return
+        } else {
+            session.historySelection = [entry.id]
+        }
+        session.historyAnchor = entry.id
+    }
+
+    @ViewBuilder private func menu(_ entry: HistoryEntry) -> some View {
+        let targets = session.historySelection.contains(entry.id) ? session.historySelection : [entry.id]
+        Button("Open Results") { session.openResults(entry) }.disabled(!session.hasStoredRows(entry))
+        Button("Look Up Again") { session.rerun(entry) }
+        Divider()
+        Button(targets.count == 1 ? "Export Results…" : "Export Results of \(targets.count) Lookups…") { session.exportHistory(targets) }
+            .disabled(!session.history.contains { targets.contains($0.id) && session.hasStoredRows($0) })
+        Divider()
+        Button(targets.count == 1 ? "Delete…" : "Delete \(targets.count) Lookups…", role: .destructive) { confirmDelete(session, targets) }
+        Button("Delete All…", role: .destructive) { confirmDelete(session, Set(session.history.map(\.id))) }
+        Divider()
+        Button("Select All") { session.historySelection = Set(session.history.map(\.id)) }
+        Button("Unselect All") { session.historySelection = [] }.disabled(session.historySelection.isEmpty)
+    }
+
     private func widths(_ total: CGFloat) -> [CGFloat] {
         let fixed = Self.columns.compactMap(\.1).reduce(0, +)
         let fractions = Self.columns.map(\.2).reduce(0, +)
@@ -342,25 +389,60 @@ struct HistoryView: View {
     }
 }
 
+@MainActor func confirmDelete(_ session: Session, _ ids: Set<UUID>) {
+    guard !ids.isEmpty else { return }
+    let all = ids.count == session.history.count
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = all ? "Delete all \(ids.count) lookups from History?" : ids.count == 1 ? "Delete this lookup from History?" : "Delete \(ids.count) lookups from History?"
+    alert.informativeText = "Their stored results are deleted too. Saved lists are not affected."
+    alert.addButton(withTitle: "Delete").hasDestructiveAction = true
+    alert.addButton(withTitle: "Cancel")
+    if alert.runModal() == .alertFirstButtonReturn { session.deleteHistory(ids) }
+}
+
+private struct HistoryCheckbox: View {
+    let on: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(on ? Color.accent : .white(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(on ? Color.accent : .white(0.22)))
+                .overlay { if on { Image(systemName: "checkmark").font(.system(size: 8, weight: .heavy)).foregroundStyle(.white) } }
+                .frame(width: 14, height: 14)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 private struct HistoryRow: View {
     let entry: HistoryEntry
     let widths: [CGFloat]
-    let action: () -> Void
+    let selected: Bool
+    let stored: Bool
+    let click: () -> Void
+    let toggle: () -> Void
     @StateObject private var hover = HoverState()
 
     var body: some View {
         HStack(spacing: 0) {
-            cell(0) { Text(when).foregroundStyle(Color.white(0.55)).monospacedDigit() }
-            cell(1) { Text(entry.list ?? "Untitled lookup").fontWeight(.semibold) }
-            cell(2) { Text(String(entry.targetCount)).monospacedDigit() }
-            cell(3) { Text(types).font(.mono(11.5)).foregroundStyle(Color.white(0.7)) }
-            cell(4) { Text(entry.server.isEmpty ? "System" : entry.server).font(.mono(11.5)).foregroundStyle(Color.white(0.7)) }
-            cell(5, trailing: true) { Text(String(entry.rows)).monospacedDigit() }
-            cell(6) {
+            HistoryCheckbox(on: selected, action: toggle).frame(width: widths[0])
+            cell(1) { Text(when).foregroundStyle(Color.white(0.55)).monospacedDigit() }
+            cell(2) { Text(entry.list ?? "Untitled lookup").fontWeight(.semibold) }
+            cell(3) { Text(String(entry.targetCount)).monospacedDigit() }
+            cell(4) { Text(types).font(.mono(11.5)).foregroundStyle(Color.white(0.7)) }
+            cell(5) { Text(entry.server.isEmpty ? "System" : entry.server).font(.mono(11.5)).foregroundStyle(Color.white(0.7)) }
+            cell(6, trailing: true) { Text(String(entry.rows)).monospacedDigit() }
+            cell(7) {
                 HStack(spacing: 10) {
                     Text("\(entry.ok) OK").foregroundStyle(Color.ok)
                     if entry.noData > 0 { Text("\(entry.noData) NODATA").foregroundStyle(Color.warn) }
                     if entry.failed > 0 { Text("\(entry.failed) failed").foregroundStyle(Color.bad) }
+                    if !stored { Text("not stored").foregroundStyle(Color.t3) }
                 }
                 .font(.ui(12))
                 .monospacedDigit()
@@ -368,11 +450,11 @@ private struct HistoryRow: View {
         }
         .font(.ui(12.5))
         .frame(height: 34)
-        .background(RoundedRectangle(cornerRadius: 6).fill(hover.on ? Color.white(0.05) : .clear))
+        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accent.opacity(0.25) : hover.on ? Color.white(0.05) : .clear))
         .contentShape(Rectangle())
         .onHover { hover.on = $0 }
-        .onTapGesture(perform: action)
-        .help("Look up again")
+        .onTapGesture(perform: click)
+        .help(stored ? "Double-click to open the stored results" : "Results were not stored for this lookup; double-click to look it up again")
     }
 
     private var when: String {
