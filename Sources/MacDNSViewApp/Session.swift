@@ -31,9 +31,22 @@ final class Session {
     private var beforeNewList: (targets: String, list: String?)?
     var search = ""
     var outcomes = Set(Outcome.allCases)
-    var autoRefresh = 0 { didSet { scheduleRefresh() } }
+    var autoRefresh = 0 {
+        didSet {
+            scheduleRefresh()
+            if autoRefresh == 0 {
+                stopRecording()
+            } else if let i = recordingIndex {
+                watchSessions[i].interval = autoRefresh
+            } else {
+                startRecording()
+            }
+        }
+    }
     private(set) var nextRefresh: Date?
-    private(set) var events: [WatchEvent] = []
+    private(set) var watchSessions: [WatchSession] { didSet { defaults.set(try? JSONEncoder().encode(watchSessions), forKey: "watchSessions") } }
+    private(set) var recordingID: UUID?
+    private var recordingIndex: Int? { watchSessions.firstIndex { $0.id == recordingID } }
     private(set) var history: [HistoryEntry] { didSet { defaults.set(try? JSONEncoder().encode(history), forKey: "history") } }
 
     var targetsText: String { didSet { defaults.set(targetsText, forKey: "targets") } }
@@ -64,6 +77,7 @@ final class Session {
         visibleColumns = defaults.stringArray(forKey: "visibleColumns").map(Set.init) ?? ["index", "target", "type", "data", "ttl", "server", "time", "validated", "differs"]
         columnWidths = defaults.dictionary(forKey: "columnWidths") as? [String: Double] ?? [:]
         savedLists = defaults.data(forKey: "savedLists").flatMap { try? JSONDecoder().decode([SavedList].self, from: $0) } ?? []
+        watchSessions = defaults.data(forKey: "watchSessions").flatMap { try? JSONDecoder().decode([WatchSession].self, from: $0) } ?? []
         history = defaults.data(forKey: "history").flatMap { try? JSONDecoder().decode([HistoryEntry].self, from: $0) } ?? []
     }
 
@@ -154,6 +168,24 @@ final class Session {
         }
         popover = nil
         flash("Saved \u{201C}\(name)\u{201D}")
+    }
+
+    private func startRecording() {
+        guard !targetsText.isEmpty else { return }
+        let watch = WatchSession(name: currentList ?? "Untitled lookup", interval: autoRefresh, start: Date())
+        watchSessions = Array(([watch] + watchSessions).prefix(20))
+        recordingID = watch.id
+        if !isRunning { run() }
+    }
+
+    private func stopRecording() {
+        guard let i = recordingIndex else { return }
+        watchSessions[i].end = Date()
+        recordingID = nil
+    }
+
+    func clearWatchSessions(_ ids: Set<UUID>) {
+        watchSessions.removeAll { ids.contains($0.id) && $0.id != recordingID }
     }
 
     func newSession() {
@@ -278,11 +310,11 @@ final class Session {
                 return row
             }
         }
-        if autoRefresh > 0, previous?.key == runKey {
+        if let i = recordingIndex, previous?.key == runKey {
             func line(_ row: Row) -> String {
                 [row.target, row.typeName, row.server, [row.address, row.data, row.error ?? ""].first { !$0.isEmpty } ?? row.name].joined(separator: "  ")
             }
-            events.insert(WatchEvent(date: Date(), changed: rows.filter { changed.contains($0.id) }.map(line), removed: removed.map(line)), at: 0)
+            watchSessions[i].events.insert(WatchEvent(date: Date(), changed: rows.filter { changed.contains($0.id) }.map(line), removed: removed.map(line)), at: 0)
         }
         previous = (runKey, rows)
         finishedAt = Date()
@@ -436,8 +468,28 @@ extension Row {
 
 enum CloudflareFilter: String, CaseIterable { case any = "Any", only = "On", exclude = "Off" }
 
-struct WatchEvent: Identifiable {
-    let id = UUID()
+struct WatchSession: Codable, Identifiable {
+    var id = UUID()
+    let name: String
+    var interval: Int
+    let start: Date
+    var end: Date?
+    var events: [WatchEvent] = []
+
+    var log: String {
+        let format: (Date) -> String = { $0.formatted(date: .abbreviated, time: .standard) }
+        var lines = ["MacDNSView watch session: \(name)", "Every \(interval) seconds, \(format(start)) to \(end.map(format) ?? "now")", ""]
+        for event in events.reversed() {
+            let title = [event.changed.isEmpty ? nil : "\(event.changed.count) changed", event.removed.isEmpty ? nil : "\(event.removed.count) gone"].compactMap { $0 }
+            lines.append("\(event.date.formatted(date: .omitted, time: .standard))  \(title.isEmpty ? "No changes" : title.joined(separator: ", "))")
+            lines += event.changed.map { "    + \($0)" } + event.removed.map { "    - \($0)" }
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+}
+
+struct WatchEvent: Codable, Identifiable {
+    var id = UUID()
     let date: Date
     let changed: [String]
     let removed: [String]

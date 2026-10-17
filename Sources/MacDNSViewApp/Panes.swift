@@ -1,6 +1,7 @@
 import AppKit
 import MacDNSViewCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct InspectorView: View {
     @Bindable var session: Session
@@ -243,26 +244,107 @@ struct WatchView: View {
                 .padding(.vertical, 18)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.white(0.04)))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white(0.08)))
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Changes between runs").font(.ui(12, .bold)).foregroundStyle(Color.white(0.5)).padding(.bottom, 8)
-                    if session.events.isEmpty {
-                        Text("Nothing yet. Each run after the first is compared with the one before.")
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Watch sessions").font(.ui(12, .bold)).foregroundStyle(Color.white(0.5))
+                        Spacer()
+                        let finished = Set(session.watchSessions.filter { $0.id != session.recordingID }.map(\.id))
+                        if !finished.isEmpty {
+                            HoverButton(action: { confirmClear(finished, all: true) }) {
+                                Text("Clear All…").font(.ui(12)).foregroundStyle(Color.white(0.7)).padding(.horizontal, 8).frame(height: 22)
+                            }
+                        }
+                    }
+                    if session.watchSessions.isEmpty {
+                        Text("No sessions yet. Pick an interval to repeat the lookup; each watch is recorded as a session with the changes between runs.")
                             .font(.ui(13))
                             .foregroundStyle(Color.t3)
                             .padding(.vertical, 12)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .overlay(alignment: .top) { Rectangle().fill(Color.white(0.07)).frame(height: 1) }
                     }
-                    ForEach(session.events) { event in
-                        let quiet = event.changed.isEmpty && event.removed.isEmpty
-                        self.event(time: event.date.formatted(date: .omitted, time: .standard), title: title(event), lines: event.changed, removed: event.removed,
-                                   dot: quiet ? .white(0.25) : event.changed.isEmpty ? .warn : .accent, muted: quiet)
-                    }
+                    ForEach(session.watchSessions) { watch in card(watch) }
                 }
             }
             .padding(.horizontal, 32)
             .padding(.vertical, 28)
         }
+    }
+
+    private func card(_ watch: WatchSession) -> some View {
+        let live = watch.id == session.recordingID
+        let changes = watch.events.filter { !$0.changed.isEmpty || !$0.removed.isEmpty }.count
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(watch.name).font(.ui(13, .semibold))
+                        if live { Tag(label: "RECORDING", color: .bad) }
+                    }
+                    Text(summary(watch, changes: changes)).font(.ui(11.5)).foregroundStyle(Color.white(0.5))
+                }
+                Spacer()
+                HoverButton(action: { save(watch) }, normal: .white(0.08), hover: .white(0.14), radius: 6) {
+                    Label("Save", systemImage: "square.and.arrow.down").font(.ui(12)).foregroundStyle(Color.white(0.85)).padding(.horizontal, 10).frame(height: 24)
+                }
+                .help("Save this session's log to a text file")
+                HoverButton(action: { confirmClear([watch.id], all: false) }, normal: .white(0.08), hover: .white(0.14), radius: 6) {
+                    Label("Clear", systemImage: "trash").font(.ui(12)).foregroundStyle(Color.white(0.85)).padding(.horizontal, 10).frame(height: 24)
+                }
+                .disabled(live)
+                .opacity(live ? 0.4 : 1)
+                .help(live ? "Turn Watch off before clearing this session" : "Remove this session")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            if watch.events.isEmpty {
+                Text(live ? "Waiting for the next run to compare." : "No runs were compared in this session.")
+                    .font(.ui(12.5)).foregroundStyle(Color.t3)
+                    .padding(.horizontal, 16).padding(.bottom, 12)
+            }
+            ForEach(watch.events) { event in
+                let quiet = event.changed.isEmpty && event.removed.isEmpty
+                self.event(time: event.date.formatted(date: .omitted, time: .standard), title: title(event), lines: event.changed, removed: event.removed,
+                           dot: quiet ? .white(0.25) : event.changed.isEmpty ? .warn : .accent, muted: quiet)
+                    .padding(.horizontal, 16)
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white(0.03)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(live ? Color.bad.opacity(0.45) : .white(0.08)))
+    }
+
+    private func summary(_ watch: WatchSession, changes: Int) -> String {
+        let interval = Session.intervals.first { $0.seconds == watch.interval }?.menu.lowercased() ?? "every \(watch.interval) seconds"
+        let start = watch.start.formatted(date: .abbreviated, time: .shortened)
+        let span = watch.end.map { "\(start) to \($0.formatted(date: .omitted, time: .shortened))" } ?? "since \(start)"
+        return "\(interval.prefix(1).uppercased() + interval.dropFirst()) · \(span) · \(watch.events.count) run\(watch.events.count == 1 ? "" : "s") compared · \(changes) with changes"
+    }
+
+    private func save(_ watch: WatchSession) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(watch.name) watch.txt"
+        panel.allowedContentTypes = [.plainText]
+        guard let window = NSApp.keyWindow else { return }
+        let log = watch.log
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try log.write(to: url, atomically: true, encoding: .utf8)
+                session.flash("Saved \(url.lastPathComponent)")
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+        }
+    }
+
+    private func confirmClear(_ ids: Set<UUID>, all: Bool) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = all ? "Clear all \(ids.count) finished watch sessions?" : "Clear this watch session?"
+        alert.informativeText = ids.count == 1 ? "Its change log is removed. Save the session first to keep it." : "Their change logs are removed. Save a session first to keep its log."
+        alert.addButton(withTitle: "Clear").hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn { session.clearWatchSessions(ids) }
     }
 
     private func event(time: String, title: String, lines: [String], removed: [String], dot: Color, muted: Bool) -> some View {
@@ -282,16 +364,18 @@ struct WatchView: View {
         .overlay(alignment: .top) { Rectangle().fill(Color.white(0.07)).frame(height: 1) }
     }
 
-    private var name: String { session.currentList ?? "the current lookup" }
+    private var name: String {
+        session.watchSessions.first { $0.id == session.recordingID }?.name ?? session.currentList ?? "the current lookup"
+    }
 
     private var headline: String {
         guard let interval = Session.intervals.first(where: { $0.seconds == session.autoRefresh }), interval.seconds > 0 else { return "Watch is off" }
-        return "Refreshing \(name) \(interval.menu.lowercased())"
+        return "Watching \(name) \(interval.menu.lowercased())"
     }
 
     private var note: String {
-        if session.autoRefresh > 0 { return "Rows that change between runs are marked with a blue dot in Results." }
-        return session.targetsText.isEmpty ? "Run a lookup first, then pick an interval." : "Pick an interval to repeat \(name) and compare each run with the one before."
+        if session.autoRefresh > 0 { return "Changes between runs are logged in the session below and marked with a blue dot in Results. Pick Off to end it." }
+        return session.targetsText.isEmpty ? "Run a lookup first, then pick an interval." : "Pick an interval to repeat \(name). Each watch is recorded as a session below."
     }
 
     private func title(_ event: WatchEvent) -> String {
