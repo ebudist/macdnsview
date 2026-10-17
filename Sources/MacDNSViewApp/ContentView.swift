@@ -152,7 +152,7 @@ private struct Sidebar: View {
                 Image(systemName: "bookmark").font(.system(size: 11, weight: .medium)).foregroundStyle(on ? Color.accentText : .t3).frame(width: 16)
                 Text(saved.name).lineLimit(1).truncationMode(.tail).foregroundStyle(on ? Color.white : .t1)
                 Spacer(minLength: 0)
-                Text(String(Migration.parse(saved.targets).count)).font(.ui(11)).monospacedDigit().foregroundStyle(Color.white(0.35))
+                Text(String(Migration.parse(saved.targets, kind: .record(.a)).count)).font(.ui(11)).monospacedDigit().foregroundStyle(Color.white(0.35))
             }
             .font(.ui(12.5))
             .padding(.leading, 24)
@@ -275,8 +275,9 @@ private struct Header: View {
             let monitor = session.monitor
             let count = monitor.entries.count
             guard count > 0 else { return "Check whether migrated domains point at the new server" }
-            let new = monitor.newIPs.sorted().joined(separator: ", ")
-            return "\(count) domains · new \(new.isEmpty ? "per domain" : new)" + (monitor.oldIPs.isEmpty ? "" : " · old \(monitor.oldIPs.sorted().joined(separator: ", "))")
+            let new = monitor.newValues.joined(separator: ", ")
+            return "\(count) domain\(count == 1 ? "" : "s") · \(monitor.kind.name) · expected \(new.isEmpty ? "per domain" : new)"
+                + (monitor.oldValues.isEmpty ? "" : " · previous \(monitor.oldValues.joined(separator: ", "))")
         case .history: return session.historySelection.isEmpty ? "\(session.history.count) lookups" : "\(session.history.count) lookups · \(session.historySelection.count) selected"
         case .results:
             guard !session.targetsText.isEmpty else { return "Look up DNS records for many names at once" }

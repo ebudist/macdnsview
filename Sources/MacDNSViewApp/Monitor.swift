@@ -12,6 +12,12 @@ final class Monitor {
     var newText: String { didSet { defaults.set(newText, forKey: "monitor.new") } }
     var oldText: String { didSet { defaults.set(oldText, forKey: "monitor.old") } }
     var serverText: String { didSet { defaults.set(serverText, forKey: "monitor.server") } }
+    var typeName: String {
+        didSet {
+            defaults.set(typeName, forKey: "monitor.type")
+            if typeName != oldValue { reset() }
+        }
+    }
     var name: String? { didSet { defaults.set(name, forKey: "monitor.name") } }
     var saved: [SavedMonitor] { didSet { defaults.set(try? JSONEncoder().encode(saved), forKey: "monitor.saved") } }
     private(set) var events: [MonitorEvent] { didSet { defaults.set(try? JSONEncoder().encode(events), forKey: "monitor.events") } }
@@ -42,15 +48,26 @@ final class Monitor {
         newText = defaults.string(forKey: "monitor.new") ?? ""
         oldText = defaults.string(forKey: "monitor.old") ?? ""
         serverText = defaults.string(forKey: "monitor.server") ?? Self.defaultServers
+        typeName = defaults.string(forKey: "monitor.type") ?? "A"
         name = defaults.string(forKey: "monitor.name")
         saved = defaults.data(forKey: "monitor.saved").flatMap { try? JSONDecoder().decode([SavedMonitor].self, from: $0) } ?? []
         events = defaults.data(forKey: "monitor.events").flatMap { try? JSONDecoder().decode([MonitorEvent].self, from: $0) } ?? []
         migratedAt = defaults.data(forKey: "monitor.migratedAt").flatMap { try? JSONDecoder().decode([String: Date].self, from: $0) } ?? [:]
     }
 
-    var entries: [Migration.Entry] { Migration.parse(targetsText) }
-    var newIPs: Set<String> { Set(Migration.addresses(newText)) }
-    var oldIPs: Set<String> { Set(Migration.addresses(oldText)) }
+    static let typeNames = ["A", "AAAA", "CNAME", "MX", "NS", "SOA", "SRV", "TXT", "CAA", "HTTPS", "SVCB", "DS", "DNSKEY", "DMARC"]
+
+    func ordered(_ answers: some Sequence<String>, expected: [String]) -> [String] {
+        answers.sorted { a, b in
+            let (x, y) = (Migration.classify(a, kind: kind, new: expected, old: oldValues) == .new, Migration.classify(b, kind: kind, new: expected, old: oldValues) == .new)
+            return x != y ? x : a < b
+        }
+    }
+
+    var kind: Migration.Kind { typeName == "DMARC" ? .dmarc : .record(RecordType.lookupOrder.first { $0.description == typeName } ?? .a) }
+    var entries: [Migration.Entry] { Migration.parse(targetsText, kind: kind) }
+    var newValues: [String] { Migration.values(newText, kind: kind) }
+    var oldValues: [String] { Migration.values(oldText, kind: kind) }
     var title: String { name ?? "DNS Monitor" }
     var visibleChecks: [Migration.Check] { checks.filter { filter == nil || $0.status == filter } }
     var selectedCheck: Migration.Check? { visibleChecks.first { $0.target == selection } }
@@ -61,10 +78,15 @@ final class Monitor {
     func problemText() -> String? {
         let entries = self.entries
         if entries.isEmpty { return "Add at least one domain, one per line." }
-        let bad = (Migration.addresses(newText) + Migration.addresses(oldText)).filter { !Migration.isAddress($0) }
-        if let first = bad.first { return "\(first) is not an IP address." }
-        if newIPs.isEmpty, let missing = entries.first(where: { $0.expected.isEmpty }) {
-            return "Add the new server's IP, or put one after \(missing.target.display)."
+        if let bad = Migration.invalid(newValues + oldValues + entries.flatMap(\.expected), kind: kind) {
+            return switch kind {
+            case .record(.a): "\(bad) is not an IPv4 address."
+            case .record(.aaaa): "\(bad) is not an IPv6 address."
+            default: "\(bad) is not a host name."
+            }
+        }
+        if newValues.isEmpty, let missing = entries.first(where: { $0.expected.isEmpty }) {
+            return "Add the expected value, or put one after \(missing.target.display)."
         }
         let servers = serverText.trimmingCharacters(in: .whitespaces)
         if !servers.isEmpty, (try? Server.list(parsing: servers)) == nil {
@@ -77,12 +99,13 @@ final class Monitor {
         task?.cancel()
         let entries = self.entries
         guard !entries.isEmpty else { return }
+        let kind = self.kind
         var options = LookupOptions()
-        options.types = [.a]
+        if case .record(let type) = kind { options.types = [type] } else { options.types = []; options.dmarc = true }
         options.reverseLookupAddresses = false
         options.hideAdditional = true
         let lookup = Lookup(options: options, servers: (try? Server.list(parsing: serverText)) ?? [])
-        let (new, old) = (newIPs, oldIPs)
+        let (new, old) = (newValues, oldValues)
         rows = []
         domainCount = entries.count
         isRunning = true
@@ -94,7 +117,7 @@ final class Monitor {
             guard !Task.isCancelled else { return }
             rows = Lookup.canonical(rows)
             let before = Dictionary(checks.map { ($0.target, $0.status) }, uniquingKeysWith: { a, _ in a })
-            checks = entries.map { Migration.check($0.target.display, rows: rows, new: $0.expected.isEmpty ? new : Set($0.expected), old: old) }
+            checks = entries.map { Migration.check($0.target.display, rows: rows, kind: kind, new: $0.expected.isEmpty ? new : $0.expected, old: old) }
             lastRun = Date()
             isRunning = false
             record(before)
@@ -113,7 +136,7 @@ final class Monitor {
         }
         events = Array(events.prefix(500))
         if !migrated.isEmpty {
-            Notifier.post(migrated.count == 1 ? "\(migrated[0]) points to the new server" : "\(migrated.count) domains point to the new server",
+            Notifier.post(migrated.count == 1 ? "\(migrated[0]) has the expected \(kind.name) record" : "\(migrated.count) domains have the expected \(kind.name) record",
                           migrated.count == 1 ? "\(count(.migrated)) of \(checks.count) done in \(title)." : migrated.joined(separator: ", "))
         }
         let done: Set<MigrationStatus> = [.migrated, .proxied, .failed]
@@ -149,7 +172,7 @@ final class Monitor {
 
     func save(as name: String) {
         saved.removeAll { $0.name == name }
-        saved.append(SavedMonitor(name: name, targets: targetsText, new: newText, old: oldText, server: serverText))
+        saved.append(SavedMonitor(name: name, targets: targetsText, new: newText, old: oldText, server: serverText, type: typeName))
         saved.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         self.name = name
     }
@@ -159,7 +182,18 @@ final class Monitor {
         newText = monitor.new
         oldText = monitor.old
         serverText = monitor.server
+        typeName = monitor.type ?? "A"
         name = monitor.name
+        interval = 0
+        checks = []
+        rows = []
+        events = []
+        migratedAt = [:]
+        selection = nil
+    }
+
+    private func reset() {
+        stop()
         interval = 0
         checks = []
         rows = []
@@ -174,6 +208,7 @@ final class Monitor {
         targetsText = ""
         newText = ""
         oldText = ""
+        typeName = "A"
         serverText = Self.defaultServers
         name = nil
         checks = []
@@ -189,7 +224,7 @@ final class Monitor {
     func rename(_ old: String, to new: String) {
         guard let monitor = saved.first(where: { $0.name == old }) else { return }
         saved.removeAll { $0.name == old || $0.name == new }
-        saved.append(SavedMonitor(name: new, targets: monitor.targets, new: monitor.new, old: monitor.old, server: monitor.server))
+        saved.append(SavedMonitor(name: new, targets: monitor.targets, new: monitor.new, old: monitor.old, server: monitor.server, type: monitor.type))
         saved.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         if name == old { name = new }
     }
@@ -214,6 +249,7 @@ struct SavedMonitor: Codable {
     let new: String
     let old: String
     let server: String
+    var type: String?
 }
 
 extension MigrationStatus {
@@ -241,12 +277,12 @@ extension MigrationStatus {
 
     var help: String {
         switch self {
-        case .migrated: "Every server answers with the new IP"
-        case .propagating: "Some servers already answer with the new IP, others still with the old one"
-        case .pending: "Every server still answers with the old IP"
-        case .unexpected: "An answer is neither the new nor the old IP"
+        case .migrated: "Every server answers with the expected value"
+        case .propagating: "Some servers already answer with the expected value, others do not yet"
+        case .pending: "No server answers with the expected value yet"
+        case .unexpected: "An answer is neither the expected nor the previous value"
         case .proxied: "The answers are Cloudflare IPs, so the origin server cannot be confirmed from DNS"
-        case .failed: "No A answer: NXDOMAIN, timeout, or no record"
+        case .failed: "No answer of the chosen record type: NXDOMAIN, timeout, or no record"
         }
     }
 }
@@ -319,7 +355,7 @@ struct MonitorView: View {
         let migrated = monitor.count(.migrated)
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(monitor.isRunning && total == 0 ? "Checking \(monitor.domainCount) domains…" : "\(migrated) of \(total) point to the new server")
+                Text(monitor.isRunning && total == 0 ? "Checking \(monitor.domainCount) domains…" : "\(migrated) of \(total) \(monitor.kind.isAddress ? "point to the new server" : "have the expected \(monitor.kind.name) record")")
                     .font(.ui(15, .bold))
                 Spacer()
                 if total > 0 { Text("\(Int((Double(migrated) / Double(total) * 100).rounded()))%").font(.ui(13, .semibold)).foregroundStyle(Color.ok).monospacedDigit() }
@@ -491,7 +527,7 @@ private struct MonitorTable: View {
                 .sorted { $0.value.count > $1.value.count || $0.value.count == $1.value.count && $0.value[0] < $1.value[0] }
             HStack(spacing: 12) {
                 ForEach(groups, id: \.value) { ips, servers in
-                    let sorted = ips.sorted()
+                    let sorted = monitor.ordered(ips, expected: check.expected)
                     HStack(spacing: 5) {
                         Text(sorted.count > 1 ? "\(sorted[0]) +\(sorted.count - 1)" : sorted[0]).foregroundStyle(answerColor(sorted, check: check))
                         Text(groups.count == 1 ? "all \(servers.count)" : servers.joined(separator: ", ")).font(.ui(11)).foregroundStyle(Color.t3)
@@ -503,10 +539,12 @@ private struct MonitorTable: View {
         }
     }
 
-    private func answerColor(_ ips: [String], check: Migration.Check) -> Color {
-        if ips.allSatisfy(check.expected.contains) { return .ok }
-        if ips.allSatisfy(monitor.oldIPs.contains) { return .warn }
-        if ips.allSatisfy({ Cloudflare.range(of: $0) != nil }) { return .cloudflare }
+    private func answerColor(_ answers: [String], check: Migration.Check) -> Color {
+        let kinds = Set(answers.map { Migration.classify($0, kind: monitor.kind, new: check.expected, old: monitor.oldValues) })
+        if kinds == [.new] { return .ok }
+        if kinds == [.old] { return .warn }
+        if kinds == [.cloudflare] { return .cloudflare }
+        if monitor.kind.isText { return kinds.contains(.new) ? .ok : .t2 }
         return check.status == .unexpected ? MigrationStatus.unexpected.color : .t1
     }
 
@@ -538,9 +576,9 @@ private struct MonitorDetail: View {
                 }
                 .padding(20)
                 divider
-                section("Expected") {
-                    field("New", check.expected.joined(separator: ", "), .ok)
-                    field("Old", monitor.oldIPs.sorted().joined(separator: ", "), .warn)
+                section("Expected \(monitor.kind.name)") {
+                    field("Expected", check.expected.joined(separator: ", "), .ok)
+                    field("Previous", monitor.oldValues.joined(separator: ", "), .warn)
                     field("Lowest TTL", check.ttl.map { "\($0) s" } ?? "", .t1)
                 }
                 divider
@@ -551,7 +589,7 @@ private struct MonitorDetail: View {
                     ForEach(check.answers.keys.sorted(), id: \.self) { server in
                         VStack(alignment: .leading, spacing: 3) {
                             Text(server).font(.ui(11.5, .semibold)).foregroundStyle(Color.white(0.6))
-                            ForEach(check.answers[server]!, id: \.self) { ip in
+                            ForEach(monitor.ordered(check.answers[server]!, expected: check.expected), id: \.self) { ip in
                                 HStack(spacing: 6) {
                                     Text(ip).font(.mono(12)).textSelection(.enabled)
                                     Text(label(ip)).font(.ui(11)).foregroundStyle(labelColor(ip))
@@ -572,19 +610,25 @@ private struct MonitorDetail: View {
 
     private var divider: some View { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
 
-    private func label(_ ip: String) -> String {
-        if check.expected.contains(ip) { return "new" }
-        if monitor.oldIPs.contains(ip) { return "old" }
-        if Cloudflare.range(of: ip) != nil { return "Cloudflare" }
-        return "unexpected"
+    private func answer(_ text: String) -> Migration.Answer {
+        Migration.classify(text, kind: monitor.kind, new: check.expected, old: monitor.oldValues)
     }
 
-    private func labelColor(_ ip: String) -> Color {
-        switch label(ip) {
-        case "new": .ok
-        case "old": .warn
-        case "Cloudflare": .cloudflare
-        default: MigrationStatus.unexpected.color
+    private func label(_ text: String) -> String {
+        switch answer(text) {
+        case .new: "expected"
+        case .old: "previous"
+        case .cloudflare: "Cloudflare"
+        case .other: monitor.kind.isText ? "other record" : "unexpected"
+        }
+    }
+
+    private func labelColor(_ text: String) -> Color {
+        switch answer(text) {
+        case .new: .ok
+        case .old: .warn
+        case .cloudflare: .cloudflare
+        case .other: monitor.kind.isText ? .t3 : MigrationStatus.unexpected.color
         }
     }
 
@@ -637,7 +681,7 @@ struct MonitorSheet: View {
                     .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white(0.12)))
                     .overlay(alignment: .topLeading) {
                         if monitor.targetsText.isEmpty {
-                            Text("One domain per line. To expect a different IP for one domain, put it after the domain:\nexample.com 203.0.113.20")
+                            Text("One domain per line. To expect a different value for one domain, put it after the domain:\nexample.com \(example)")
                                 .font(.mono(12.5)).foregroundStyle(Color.white(0.3)).padding(.horizontal, 11).padding(.vertical, 9).allowsHitTesting(false)
                         }
                     }
@@ -650,18 +694,22 @@ struct MonitorSheet: View {
                     .padding(.leading, 108)
             }
             VStack(alignment: .leading, spacing: 10) {
-                field("New server", "Expected IP addresses, separated by commas", $monitor.newText)
-                field("Old server", "Optional, to tell old answers from unexpected ones", $monitor.oldText)
+                field("Expected", expectedPrompt, $monitor.newText)
+                field("Previous", "Optional: the old value, to tell old answers from unexpected ones", $monitor.oldText)
                 if let problem = monitor.problem {
                     Text(problem).font(.ui(12)).foregroundStyle(Color.problem).padding(.leading, 108)
                 }
             }
-            HStack(alignment: .center, spacing: 12) {
-                formLabel("Record type")
-                TypeChip(label: "A", on: true) {}
-                    .frame(width: 70)
-                    .allowsHitTesting(false)
-                Text("DNS Monitor compares A records for now.").font(.ui(11.5)).foregroundStyle(Color.white(0.45))
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    formLabel("Record type").padding(.top, 3)
+                    Text("Pick one").font(.ui(11.5)).foregroundStyle(Color.white(0.45))
+                }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 6) {
+                    ForEach(Monitor.typeNames, id: \.self) { name in
+                        TypeChip(label: name, on: monitor.typeName == name) { monitor.typeName = name; monitor.problem = nil }
+                    }
+                }
             }
         } footer: {
             if let name = monitor.savingName {
@@ -692,9 +740,31 @@ struct MonitorSheet: View {
 
     private var hint: String {
         let entries = monitor.entries
-        guard !entries.isEmpty else { return "Lines starting with # are ignored. Only A records are checked." }
+        guard !entries.isEmpty else { return "Lines starting with # are ignored." }
         let own = entries.filter { !$0.expected.isEmpty }.count
-        return "\(entries.count) domain\(entries.count == 1 ? "" : "s")" + (own == 0 ? "" : " · \(own) with their own IP")
+        return "\(entries.count) domain\(entries.count == 1 ? "" : "s")" + (own == 0 ? "" : " · \(own) with their own value")
+    }
+
+    private var example: String {
+        switch monitor.kind {
+        case .record(.a): "203.0.113.20"
+        case .record(.aaaa): "2001:db8::20"
+        case .record(.mx): "mx1.newhost.com"
+        case .record(.ns): "ns1.newhost.com"
+        case .record(.cname): "app.newhost.com"
+        case _ where monitor.kind.isText: "include:_spf.newhost.com"
+        default: "value"
+        }
+    }
+
+    private var expectedPrompt: String {
+        switch monitor.kind {
+        case .record(.a): "IPv4 addresses of the new server, separated by commas"
+        case .record(.aaaa): "IPv6 addresses of the new server, separated by commas"
+        case _ where monitor.kind.isHost: "Host names, such as \(example), separated by commas"
+        case _ where monitor.kind.isText: "Text the record must contain; separate several with commas"
+        default: "Record data as Results shows it, separated by commas"
+        }
     }
 
     private func field(_ label: String, _ prompt: String, _ text: Binding<String>) -> some View {
