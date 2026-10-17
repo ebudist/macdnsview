@@ -13,6 +13,7 @@ final class Session {
     var exportFormat = ExportFormat.csv
     var exportSelected = false
     var exportSource: (title: String, rows: [Row])?
+    var exportTable: (title: String, header: [String], lines: [[String]])?
     var historySelection = Set<UUID>()
     var historyAnchor: UUID?
     var savingName: String?
@@ -112,6 +113,24 @@ final class Session {
         popover = nil
         showingSheet = false
         exportSource = nil
+        exportTable = nil
+        showingExport = true
+    }
+
+    func exportMonitor() {
+        let checks = monitor.visibleChecks
+        guard !checks.isEmpty else { return }
+        let header = ["Domain", "Status", "Expected", "Answers", "Lowest TTL", "Migrated At", "Error"]
+        let lines = checks.map { check in
+            [check.target, check.status.rawValue, check.expected.joined(separator: " "),
+             check.answers.keys.sorted().map { "\($0): \(check.answers[$0]!.joined(separator: " "))" }.joined(separator: "; "),
+             check.ttl.map(String.init) ?? "", monitor.migratedAt[check.target].map { $0.formatted(.iso8601) } ?? "", check.error ?? ""]
+        }
+        let title = monitor.filter.map { "\($0.rawValue.lowercased()) domains in \(monitor.title)" } ?? "every domain in \(monitor.title)"
+        popover = nil
+        showingSheet = false
+        exportSource = nil
+        exportTable = (title, header, lines)
         showingExport = true
     }
 
@@ -132,6 +151,7 @@ final class Session {
             showingSheet = false
             showingExport = false
             exportSource = nil
+            exportTable = nil
             savingName = nil
         } else {
             return false

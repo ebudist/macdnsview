@@ -311,6 +311,9 @@ private struct Header: View {
                     .disabled(monitor.entries.isEmpty)
                     .opacity(monitor.entries.isEmpty ? 0.4 : 1)
                 }
+                IconButton(symbol: "square.and.arrow.up", help: "Export a report of the shown domains") { session.exportMonitor() }
+                    .disabled(monitor.checks.isEmpty)
+                    .opacity(monitor.checks.isEmpty ? 0.4 : 1)
                 IconButton(symbol: "timer", color: monitor.interval > 0 ? .ok : .white(0.75), on: monitor.interval > 0,
                            onBackground: .ok.opacity(0.14), help: "Watch: check again on a timer") { toggle(.monitorInterval) }
                     .disabled(monitor.entries.isEmpty)

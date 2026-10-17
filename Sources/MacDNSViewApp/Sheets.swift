@@ -302,7 +302,9 @@ struct ExportSheet: View {
                 }
                 HStack(spacing: 12) {
                     formLabel("Rows")
-                    if let source = session.exportSource {
+                    if let table = session.exportTable {
+                        Text("One row for \(table.title) (\(table.lines.count))").font(.ui(12.5)).foregroundStyle(Color.white(0.85))
+                    } else if let source = session.exportSource {
                         Text("All rows from \(source.title) in History (\(source.rows.count))").font(.ui(12.5)).foregroundStyle(Color.white(0.85))
                     } else {
                         HStack(spacing: 18) {
@@ -323,7 +325,7 @@ struct ExportSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Preview · first rows").font(.ui(11.5)).foregroundStyle(Color.white(0.45))
                 ScrollView([.horizontal, .vertical]) {
-                    Text(export(Array(rows.prefix(6)), as: session.exportFormat, columns: columns))
+                    Text(preview)
                         .font(.mono(11.5))
                         .lineSpacing(4)
                         .foregroundStyle(Color.white(0.78))
@@ -337,12 +339,18 @@ struct ExportSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white(0.1)))
             }
         } footer: {
-            Text("\(rows.count) row\(rows.count == 1 ? "" : "s") · visible columns").font(.ui(12)).foregroundStyle(Color.white(0.45))
+            Text(session.exportTable.map { "\($0.lines.count) domain\($0.lines.count == 1 ? "" : "s") · DNS Monitor report" } ?? "\(rows.count) row\(rows.count == 1 ? "" : "s") · visible columns")
+                .font(.ui(12)).foregroundStyle(Color.white(0.45))
             Spacer()
             SecondaryButton(title: "Cancel") { session.closeOverlays() }
             PrimaryButton(action: save) { Text("Export…") }
                 .keyboardShortcut(.defaultAction)
         }
+    }
+
+    private var preview: String {
+        if let table = session.exportTable { return export(header: table.header, lines: Array(table.lines.prefix(6)), as: session.exportFormat) }
+        return export(Array(rows.prefix(6)), as: session.exportFormat, columns: columns)
     }
 
     private func radio(_ label: String, on: Bool, disabled: Bool, action: @escaping () -> Void) -> some View {
@@ -366,13 +374,14 @@ struct ExportSheet: View {
         panel.nameFieldStringValue = "macdnsview.\(format.2)"
         panel.allowedContentTypes = [format.3]
         guard let window = NSApp.keyWindow else { return }
-        let (rows, format, columns) = (rows, session.exportFormat, columns)
+        let (rows, format, columns, table) = (rows, session.exportFormat, columns, session.exportTable)
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
             do {
-                try export(rows, as: format, columns: columns).write(to: url, atomically: true, encoding: .utf8)
+                let text = table.map { export(header: $0.header, lines: $0.lines, as: format) } ?? export(rows, as: format, columns: columns)
+                try text.write(to: url, atomically: true, encoding: .utf8)
                 session.closeOverlays()
-                session.flash("Exported \(rows.count) rows as \(url.lastPathComponent)")
+                session.flash("Exported \(table?.lines.count ?? rows.count) \(table == nil ? "rows" : "domains") as \(url.lastPathComponent)")
             } catch {
                 NSAlert(error: error).runModal()
             }
