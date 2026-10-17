@@ -1,1 +1,1 @@
-public let version = "0.7.0"
+public let version = "0.8.0"
