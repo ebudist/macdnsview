@@ -142,6 +142,7 @@ private struct Sidebar: View {
 
     private func savedMonitor(_ saved: SavedMonitor) -> some View {
         let on = session.monitor.name == saved.name && session.pane == .monitor
+        let watched = session.monitor.isWatched(saved.name)
         return HoverButton(action: {
             session.monitor.load(saved)
             session.pane = .monitor
@@ -151,7 +152,12 @@ private struct Sidebar: View {
                 Image(systemName: "bookmark").font(.system(size: 11, weight: .medium)).foregroundStyle(on ? Color.accentText : .t3).frame(width: 16)
                 Text(saved.name).lineLimit(1).truncationMode(.tail).foregroundStyle(on ? Color.white : .t1)
                 Spacer(minLength: 0)
-                Text(String(Migration.parse(saved.targets, kind: .record(.a)).count)).font(.ui(11)).monospacedDigit().foregroundStyle(Color.white(0.35))
+                if watched {
+                    Circle().fill(Color.ok).frame(width: 6, height: 6)
+                        .help(session.monitor.backgroundRunning == saved.name ? "Checking now" : "Watching")
+                }
+                Text(session.monitor.progress(saved.name) ?? String(Migration.parse(saved.targets, kind: .record(.a)).count))
+                    .font(.ui(11)).monospacedDigit().foregroundStyle(watched ? Color.ok : .white(0.35))
             }
             .font(.ui(12.5))
             .padding(.leading, 24)
@@ -159,6 +165,10 @@ private struct Sidebar: View {
             .frame(height: 28)
         }
         .contextMenu {
+            if watched {
+                Button("Stop Watching") { session.monitor.stopWatching(saved.name) }
+                Divider()
+            }
             Button("Rename…") {
                 if let name = askName("Rename \(saved.name) to", initial: saved.name, button: "Rename") { session.monitor.rename(saved.name, to: name) }
             }

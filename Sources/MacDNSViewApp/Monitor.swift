@@ -44,6 +44,9 @@ final class Monitor {
 
     private(set) var rows: [Row] = []
     private(set) var isRunning = false
+    private(set) var background: [String: (interval: Int, next: Date)] = [:]
+    private(set) var backgroundRunning: String?
+    private var backgroundTask: Task<Void, Never>?
     private(set) var domainCount = 0
     private var task: Task<Void, Never>?
     private let defaults = UserDefaults.standard
@@ -75,14 +78,12 @@ final class Monitor {
         }
     }
 
-    var kind: Migration.Kind { typeName == "DMARC" ? .dmarc : .record(RecordType.lookupOrder.first { $0.description == typeName } ?? .a) }
-    var entries: [Migration.Entry] {
-        let entries = Migration.parse(targetsText, kind: kind)
-        return includeWWW ? Migration.addingWWW(entries) : entries
-    }
+    var config: SavedMonitor { SavedMonitor(name: name ?? "", targets: targetsText, new: newText, old: oldText, server: serverText, type: typeName, www: includeWWW) }
+    var kind: Migration.Kind { config.kind }
+    var entries: [Migration.Entry] { config.entries }
     var leftoverCount: Int { checks.filter { $0.leftoverAAAA != nil }.count }
-    var newValues: [String] { Migration.values(newText, kind: kind) }
-    var oldValues: [String] { Migration.values(oldText, kind: kind) }
+    var newValues: [String] { config.newValues }
+    var oldValues: [String] { config.oldValues }
     var title: String { name ?? "Propagation Checker" }
     var visibleChecks: [Migration.Check] { checks.filter { filter == nil || $0.status == filter } }
     var selectedCheck: Migration.Check? { selection.count == 1 ? visibleChecks.first { selection.contains($0.target) } : nil }
@@ -112,15 +113,10 @@ final class Monitor {
 
     func run() {
         task?.cancel()
-        let entries = self.entries
+        let config = self.config
+        let entries = config.entries
         guard !entries.isEmpty else { return }
-        let kind = self.kind
-        var options = LookupOptions()
-        if case .record(let type) = kind { options.types = type == .a ? [.a, .aaaa] : [type] } else { options.types = []; options.dmarc = true }
-        options.reverseLookupAddresses = false
-        options.hideAdditional = true
-        let lookup = Lookup(options: options, servers: (try? Server.list(parsing: serverText)) ?? [])
-        let (new, old) = (newValues, oldValues)
+        let lookup = config.lookup
         rows = []
         domainCount = entries.count
         isRunning = true
@@ -131,40 +127,79 @@ final class Monitor {
             }
             guard !Task.isCancelled else { return }
             rows = Lookup.canonical(rows)
-            let before = Dictionary(checks.map { ($0.target, $0.status) }, uniquingKeysWith: { a, _ in a })
-            checks = entries.map {
-                Migration.check($0.target.display, rows: rows, kind: kind, new: $0.expected.isEmpty ? new : $0.expected, old: $0.previous.isEmpty ? old : $0.previous)
-            }
-            lastRun = Date()
             isRunning = false
-            record(before)
+            record(config.checks(rows))
         }
     }
 
-    private func record(_ before: [String: MigrationStatus]) {
-        let now = Date()
-        var migrated: [String] = []
-        for check in checks {
-            if check.status == .migrated, migratedAt[check.target] == nil { migratedAt[check.target] = now }
-            if check.status != .migrated { migratedAt[check.target] = nil }
-            guard let previous = before[check.target], previous != check.status else { continue }
-            events.insert(MonitorEvent(date: now, domain: check.target, from: previous, to: check.status), at: 0)
-            if check.status == .migrated { migrated.append(check.target) }
-        }
-        events = Array(events.prefix(500))
-        runs = Array((runs + [MonitorRun(date: now, counts: Dictionary(grouping: checks, by: \.status.rawValue).mapValues(\.count))]).suffix(500))
+    private func record(_ new: [Migration.Check]) {
+        var state = MonitorState(checks: checks, events: events, migratedAt: migratedAt, lastRun: lastRun, runs: runs)
+        let migrated = state.record(new, at: Date())
+        (checks, events, migratedAt, lastRun, runs) = (state.checks, state.events, state.migratedAt, state.lastRun, state.runs ?? [])
         stash()
-        if !migrated.isEmpty {
-            Notifier.post(migrated.count == 1 ? "\(migrated[0]) has the expected \(kind.name) record" : "\(migrated.count) domains have the expected \(kind.name) record",
-                          migrated.count == 1 ? "\(count(.migrated)) of \(checks.count) done in \(title)." : migrated.joined(separator: ", "))
-        }
-        let done: Set<MigrationStatus> = [.migrated, .proxied, .failed]
-        if interval > 0, !checks.isEmpty, checks.allSatisfy({ done.contains($0.status) }) {
+        state.notify(migrated, kind: kind, title: title)
+        if interval > 0, state.isDone {
             interval = 0
-            let message = "Every domain in \(title) is checked: \(count(.migrated)) migrated" + (count(.proxied) + count(.failed) > 0 ? ", \(count(.proxied)) proxied, \(count(.failed)) failed." : ".")
-            Notifier.post("Migration watch finished", message)
+            state.notifyDone(title: title)
             flash("Watch stopped: every domain is done")
         }
+    }
+
+    private func watchInBackground() {
+        guard backgroundTask == nil else { return }
+        backgroundTask = Task {
+            while !background.isEmpty {
+                if !isRunning, let due = background.filter({ $0.value.next <= Date() }).min(by: { $0.value.next < $1.value.next })?.key {
+                    await runInBackground(due)
+                } else {
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+            backgroundTask = nil
+        }
+    }
+
+    private func runInBackground(_ name: String) async {
+        guard let config = saved.first(where: { $0.name == name }), let interval = background[name]?.interval else {
+            background[name] = nil
+            return
+        }
+        backgroundRunning = name
+        var rows: [Row] = []
+        for await row in config.lookup.stream(config.entries.map(\.target)) { rows.append(row) }
+        backgroundRunning = nil
+        // Dropped when the check was opened or stopped while this run was in flight.
+        guard background[name] != nil else { return }
+        background[name]?.next = Date() + Double(interval)
+        var state = states[name] ?? MonitorState(checks: [], events: [], migratedAt: [:], lastRun: nil, runs: [])
+        let migrated = state.record(config.checks(Lookup.canonical(rows)), at: Date())
+        states[name] = state
+        state.notify(migrated, kind: config.kind, title: name)
+        if state.isDone {
+            background[name] = nil
+            state.notifyDone(title: name)
+        }
+    }
+
+    private func detach() {
+        stash()
+        if let name, interval > 0, saved.contains(where: { $0.name == name }) {
+            background[name] = (interval, nextRun ?? Date())
+            watchInBackground()
+        }
+        stop()
+        interval = 0
+    }
+
+    func progress(_ name: String) -> String? {
+        let checks = name == self.name ? checks : states[name]?.checks ?? []
+        return checks.isEmpty ? nil : "\(checks.filter { $0.status == .migrated }.count)/\(checks.count)"
+    }
+
+    func isWatched(_ name: String) -> Bool { name == self.name ? interval > 0 : background[name] != nil }
+
+    func stopWatching(_ name: String) {
+        if name == self.name { interval = 0 } else { background[name] = nil }
     }
 
     private func schedule() {
@@ -177,6 +212,7 @@ final class Monitor {
             while !Task.isCancelled {
                 nextRun = Date() + Double(interval)
                 try? await Task.sleep(for: .seconds(interval))
+                while backgroundRunning != nil, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(500)) }
                 if !Task.isCancelled, !isRunning { run() }
             }
         }
@@ -211,9 +247,7 @@ final class Monitor {
     }
 
     func load(_ monitor: SavedMonitor) {
-        stash()
-        stop()
-        interval = 0
+        detach()
         targetsText = monitor.targets
         newText = monitor.new
         oldText = monitor.old
@@ -231,6 +265,7 @@ final class Monitor {
         rows = []
         selection = []
         filter = nil
+        if let resumed = background.removeValue(forKey: monitor.name) { interval = resumed.interval }
     }
 
     private func reset() {
@@ -246,9 +281,7 @@ final class Monitor {
     }
 
     func newSession() {
-        stash()
-        stop()
-        interval = 0
+        detach()
         targetsText = ""
         newText = ""
         oldText = ""
@@ -274,22 +307,56 @@ final class Monitor {
         saved.append(SavedMonitor(name: new, targets: monitor.targets, new: monitor.new, old: monitor.old, server: monitor.server, type: monitor.type, www: monitor.www))
         saved.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         states[new] = states.removeValue(forKey: old)
+        background[new] = background.removeValue(forKey: old)
         if name == old { name = new }
     }
 
     func delete(_ name: String) {
         saved.removeAll { $0.name == name }
         states[name] = nil
+        background[name] = nil
         if self.name == name { self.name = nil }
     }
 }
 
 struct MonitorState: Codable {
-    let checks: [Migration.Check]
-    let events: [MonitorEvent]
-    let migratedAt: [String: Date]
-    let lastRun: Date?
+    var checks: [Migration.Check]
+    var events: [MonitorEvent]
+    var migratedAt: [String: Date]
+    var lastRun: Date?
     var runs: [MonitorRun]?
+
+    var isDone: Bool { !checks.isEmpty && checks.allSatisfy { [.migrated, .proxied, .failed].contains($0.status) } }
+
+    func count(_ status: MigrationStatus) -> Int { checks.filter { $0.status == status }.count }
+
+    mutating func record(_ new: [Migration.Check], at now: Date) -> [String] {
+        let before = Dictionary(checks.map { ($0.target, $0.status) }, uniquingKeysWith: { a, _ in a })
+        checks = new
+        lastRun = now
+        var migrated: [String] = []
+        for check in checks {
+            if check.status == .migrated, migratedAt[check.target] == nil { migratedAt[check.target] = now }
+            if check.status != .migrated { migratedAt[check.target] = nil }
+            guard let previous = before[check.target], previous != check.status else { continue }
+            events.insert(MonitorEvent(date: now, domain: check.target, from: previous, to: check.status), at: 0)
+            if check.status == .migrated { migrated.append(check.target) }
+        }
+        events = Array(events.prefix(500))
+        runs = Array(((runs ?? []) + [MonitorRun(date: now, counts: Dictionary(grouping: checks, by: \.status.rawValue).mapValues(\.count))]).suffix(500))
+        return migrated
+    }
+
+    func notify(_ migrated: [String], kind: Migration.Kind, title: String) {
+        guard !migrated.isEmpty else { return }
+        Notifier.post(migrated.count == 1 ? "\(migrated[0]) has the expected \(kind.name) record" : "\(migrated.count) domains have the expected \(kind.name) record",
+                      migrated.count == 1 ? "\(count(.migrated)) of \(checks.count) done in \(title)." : migrated.joined(separator: ", "))
+    }
+
+    func notifyDone(title: String) {
+        let message = "Every domain in \(title) is checked: \(count(.migrated)) migrated" + (count(.proxied) + count(.failed) > 0 ? ", \(count(.proxied)) proxied, \(count(.failed)) failed." : ".")
+        Notifier.post("Migration watch finished", message)
+    }
 }
 
 struct MonitorRun: Codable, Identifiable {
@@ -316,6 +383,29 @@ struct SavedMonitor: Codable {
     let server: String
     var type: String?
     var www: Bool?
+
+    var kind: Migration.Kind { type == "DMARC" ? .dmarc : .record(RecordType.lookupOrder.first { $0.description == type } ?? .a) }
+    var entries: [Migration.Entry] {
+        let entries = Migration.parse(targets, kind: kind)
+        return www == true ? Migration.addingWWW(entries) : entries
+    }
+    var newValues: [String] { Migration.values(new, kind: kind) }
+    var oldValues: [String] { Migration.values(old, kind: kind) }
+
+    var lookup: Lookup {
+        var options = LookupOptions()
+        if case .record(let type) = kind { options.types = type == .a ? [.a, .aaaa] : [type] } else { options.types = []; options.dmarc = true }
+        options.reverseLookupAddresses = false
+        options.hideAdditional = true
+        return Lookup(options: options, servers: (try? Server.list(parsing: server)) ?? [])
+    }
+
+    func checks(_ rows: [Row]) -> [Migration.Check] {
+        let (new, old) = (newValues, oldValues)
+        return entries.map {
+            Migration.check($0.target.display, rows: rows, kind: kind, new: $0.expected.isEmpty ? new : $0.expected, old: $0.previous.isEmpty ? old : $0.previous)
+        }
+    }
 }
 
 extension MigrationStatus {
