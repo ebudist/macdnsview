@@ -39,7 +39,8 @@ final class Monitor {
     var savingName: String?
     var problem: String?
     var filter: MigrationStatus?
-    var selection: String?
+    var selection = Set<String>()
+    var selectionAnchor: String?
 
     private(set) var rows: [Row] = []
     private(set) var isRunning = false
@@ -84,7 +85,7 @@ final class Monitor {
     var oldValues: [String] { Migration.values(oldText, kind: kind) }
     var title: String { name ?? "Propagation Checker" }
     var visibleChecks: [Migration.Check] { checks.filter { filter == nil || $0.status == filter } }
-    var selectedCheck: Migration.Check? { visibleChecks.first { $0.target == selection } }
+    var selectedCheck: Migration.Check? { selection.count == 1 ? visibleChecks.first { selection.contains($0.target) } : nil }
     var progress: Double { domainCount == 0 ? 0 : Double(Set(rows.map(\.target)).count) / Double(domainCount) }
 
     func count(_ status: MigrationStatus) -> Int { checks.filter { $0.status == status }.count }
@@ -228,7 +229,7 @@ final class Monitor {
         lastRun = state?.lastRun
         domainCount = checks.count
         rows = []
-        selection = nil
+        selection = []
         filter = nil
     }
 
@@ -241,7 +242,7 @@ final class Monitor {
         runs = []
         migratedAt = [:]
         lastRun = nil
-        selection = nil
+        selection = []
     }
 
     func newSession() {
@@ -261,7 +262,7 @@ final class Monitor {
         runs = []
         migratedAt = [:]
         lastRun = nil
-        selection = nil
+        selection = []
         filter = nil
         problem = nil
         savingName = nil
@@ -621,7 +622,7 @@ private struct MonitorTable: View {
     }
 
     private func row(_ check: Migration.Check, odd: Bool, widths: [CGFloat]) -> some View {
-        let selected = monitor.selection == check.target
+        let selected = monitor.selection.contains(check.target)
         return HStack(spacing: 0) {
             HStack(spacing: 5) {
                 StatusPill(status: check.status)
@@ -641,9 +642,15 @@ private struct MonitorTable: View {
         .frame(height: 28)
         .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accent.opacity(0.32) : odd ? .white(0.025) : .clear))
         .contentShape(Rectangle())
-        .onTapGesture { monitor.selection = selected ? nil : check.target }
+        .onTapGesture {
+            if NSEvent.modifierFlags.isDisjoint(with: [.command, .shift]), monitor.selection == [check.target] {
+                monitor.selection = []
+            } else {
+                clickSelect(check.target, in: monitor.visibleChecks.map(\.target), selection: &monitor.selection, anchor: &monitor.selectionAnchor)
+            }
+        }
         .contextMenu {
-            Button("Show Details") { monitor.selection = check.target }
+            Button("Show Details") { monitor.selection = [check.target] }
             Button("Open in Bulk Lookup") { session.lookUpInResults(check.target) }
             Button("Copy Domain") {
                 NSPasteboard.general.clearContents()

@@ -27,6 +27,10 @@ struct ContentView: View {
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .focusable()
+                        .focusEffectDisabled()
+                        .onCopyCommand { session.copySelection.map { [NSItemProvider(object: $0 as NSString)] } ?? [] }
+                        .onCommand(#selector(NSResponder.selectAll(_:))) { session.selectAll() }
                         .zIndex(1)
                         if session.pane == .results, session.showingInspector, !session.rows.isEmpty || session.isRunning {
                             InspectorView(session: session)
@@ -95,7 +99,6 @@ struct ContentView: View {
             session.run()
             return true
         }
-        .onCopyCommand { [NSItemProvider(object: export(session.selectedRows, as: .tsv) as NSString)] }
     }
 
 }

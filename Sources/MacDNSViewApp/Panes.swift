@@ -7,7 +7,7 @@ struct InspectorView: View {
     @Bindable var session: Session
 
     var body: some View {
-        if let row = session.selectedRows.first {
+        if let row = session.selectedRows.first(where: { $0.id == session.selectionAnchor }) ?? session.selectedRows.first {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header(row)
@@ -438,17 +438,7 @@ struct HistoryView: View {
             if session.hasStoredRows(entry) { session.openResults(entry) } else { session.rerun(entry) }
             return
         }
-        let flags = NSEvent.modifierFlags
-        if flags.contains(.command) {
-            if session.historySelection.contains(entry.id) { session.historySelection.remove(entry.id) } else { session.historySelection.insert(entry.id) }
-        } else if flags.contains(.shift), let anchor = session.history.firstIndex(where: { $0.id == session.historyAnchor }),
-                  let index = session.history.firstIndex(where: { $0.id == entry.id }) {
-            session.historySelection.formUnion(session.history[min(anchor, index)...max(anchor, index)].map(\.id))
-            return
-        } else {
-            session.historySelection = [entry.id]
-        }
-        session.historyAnchor = entry.id
+        clickSelect(entry.id, in: session.history.map(\.id), selection: &session.historySelection, anchor: &session.historyAnchor)
     }
 
     @ViewBuilder private func menu(_ entry: HistoryEntry) -> some View {
@@ -518,7 +508,7 @@ private struct HistoryRow: View {
             cell(1) { Text(when).foregroundStyle(Color.white(0.55)).monospacedDigit() }
             cell(2) { Text(entry.list ?? "Untitled lookup").fontWeight(.semibold) }
             cell(3) { Text(String(entry.targetCount)).monospacedDigit() }
-            cell(4) { Text(types).font(.mono(11.5)).foregroundStyle(Color.white(0.7)) }
+            cell(4) { Text(entry.typeNames).font(.mono(11.5)).foregroundStyle(Color.white(0.7)) }
             cell(5) { Text(entry.server.isEmpty ? "System" : entry.server).font(.mono(11.5)).foregroundStyle(Color.white(0.7)) }
             cell(6, trailing: true) { Text(String(entry.rows)).monospacedDigit() }
             cell(7) {
@@ -548,10 +538,6 @@ private struct HistoryRow: View {
         if calendar.isDateInYesterday(entry.date) { return "Yesterday \(time)" }
         if entry.date > Date().addingTimeInterval(-6 * 86400) { return "\(entry.date.formatted(.dateTime.weekday())) \(time)" }
         return entry.date.formatted(date: .abbreviated, time: .shortened)
-    }
-
-    private var types: String {
-        (RecordType.lookupOrder.filter(entry.options.types.contains).map(\.description) + (entry.options.dmarc ? ["DMARC"] : [])).joined(separator: ", ")
     }
 
     private func cell(_ i: Int, trailing: Bool = false, @ViewBuilder content: () -> some View) -> some View {

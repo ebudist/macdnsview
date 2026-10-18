@@ -295,7 +295,7 @@ struct ExportSheet: View {
         (session.exportSource?.rows ?? (session.exportSelected && !session.selectedRows.isEmpty ? session.selectedRows : session.visibleRows))
             .map { $0.with(data: $0.value) }
     }
-    private var columns: [Int] { ResultsColumn.all.indices.filter { session.visibleColumns.contains(ResultsColumn.all[$0].id) } }
+    private var columns: [Int] { session.shownColumns }
     private var format: (String, ExportFormat, String, UTType) { Self.formats.first { $0.1 == session.exportFormat } ?? Self.formats[0] }
 
     var body: some View {

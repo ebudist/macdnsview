@@ -216,7 +216,7 @@ private struct ResultsGrid: View {
                     .frame(width: max(total, geo.size.width), alignment: .leading)
                 }
                 .onChange(of: session.selection) { _, selection in
-                    if let id = selection.first { proxy.scrollTo(id) }
+                    if selection.count == 1, let id = selection.first { proxy.scrollTo(id) }
                 }
             }
         }
@@ -263,13 +263,17 @@ private struct ResultsGrid: View {
         .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accent.opacity(0.32) : odd ? .white(0.025) : .clear))
         .contentShape(Rectangle())
         .onTapGesture {
-            if NSApp.currentEvent?.clickCount == 2 { showDetails(row) } else { session.selection = [row.id] }
+            if NSApp.currentEvent?.clickCount == 2 {
+                showDetails(row)
+            } else {
+                clickSelect(row.id, in: session.visibleRows.map(\.id), selection: &session.selection, anchor: &session.selectionAnchor)
+            }
         }
         .contextMenu {
             Button("Show Details") { showDetails(row) }
-            Button("Copy") {
+            Button(session.selection.contains(row.id) && session.selection.count > 1 ? "Copy \(session.selection.count) Rows" : "Copy") {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(export([row], as: .tsv), forType: .string)
+                NSPasteboard.general.setString(session.copyText(session.selection.contains(row.id) ? session.selectedRows : [row]), forType: .string)
             }
         }
         .padding(.horizontal, 8)

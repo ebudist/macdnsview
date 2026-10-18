@@ -16,6 +16,7 @@ final class Session {
     var exportTable: (title: String, unit: String, header: [String], lines: [[String]])?
     var historySelection = Set<UUID>()
     var historyAnchor: UUID?
+    var selectionAnchor: Row.ID?
     var savingName: String?
     var lookupName = ""
     var copiedCommand = false
@@ -117,9 +118,7 @@ final class Session {
         showingExport = true
     }
 
-    func exportMonitor() {
-        let checks = monitor.visibleChecks
-        guard !checks.isEmpty else { return }
+    private func monitorReport(_ checks: [Migration.Check]) -> (header: [String], lines: [[String]]) {
         let header = ["Domain", "Type", "Status", "Expected", "Previous", "Answers", "Lowest TTL", "Migrated At", "Leftover AAAA", "Error"]
         let lines = checks.map { check in
             [check.target, monitor.kind.name, check.status.rawValue, check.expected.joined(separator: " | "), (check.previous ?? []).joined(separator: " | "),
@@ -127,6 +126,13 @@ final class Session {
              check.ttl.map(String.init) ?? "", monitor.migratedAt[check.target].map { $0.formatted(.iso8601) } ?? "",
              (check.leftoverAAAA ?? []).joined(separator: " | "), check.error ?? ""]
         }
+        return (header, lines)
+    }
+
+    func exportMonitor() {
+        let checks = monitor.visibleChecks
+        guard !checks.isEmpty else { return }
+        let (header, lines) = monitorReport(checks)
         let title = monitor.filter.map { "\($0.rawValue.lowercased()) domains in \(monitor.title)" } ?? "every domain in \(monitor.title)"
         popover = nil
         showingSheet = false
@@ -199,7 +205,8 @@ final class Session {
         let rows = visibleRows
         guard !rows.isEmpty else { return }
         let current = rows.firstIndex { selection.contains($0.id) } ?? (offset > 0 ? -1 : rows.count)
-        selection = [rows[min(max(current + offset, 0), rows.count - 1)].id]
+        selectionAnchor = rows[min(max(current + offset, 0), rows.count - 1)].id
+        selection = [selectionAnchor!]
     }
 
     func newList() {
@@ -468,6 +475,49 @@ extension Session {
     }
 
     var selectedRows: [Row] { visibleRows.filter { selection.contains($0.id) } }
+
+    // Local time without a zone suffix, which spreadsheets read as a date.
+    private static let sheetDate = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime, .withSpaceBetweenDateAndTime]
+        formatter.timeZone = .current
+        return formatter
+    }()
+    var shownColumns: [Int] { ResultsColumn.all.indices.filter { visibleColumns.contains(ResultsColumn.all[$0].id) } }
+
+    func selectAll() {
+        switch pane {
+        case .results: selection = Set(visibleRows.map(\.id))
+        case .monitor: monitor.selection = Set(monitor.visibleChecks.map(\.target))
+        case .history: historySelection = Set(history.map(\.id))
+        case .watch: break
+        }
+    }
+
+    func copyText(_ rows: [Row]) -> String { export(rows.map { $0.with(data: $0.value) }, as: .tsv, columns: shownColumns) }
+
+    var copySelection: String? {
+        switch pane {
+        case .results:
+            return selectedRows.isEmpty ? nil : copyText(selectedRows)
+        case .monitor:
+            let checks = monitor.visibleChecks.filter { monitor.selection.contains($0.target) }
+            guard !checks.isEmpty else { return nil }
+            let report = monitorReport(checks)
+            return export(header: report.header, lines: report.lines, as: .tsv)
+        case .history:
+            let entries = history.filter { historySelection.contains($0.id) }
+            guard !entries.isEmpty else { return nil }
+            let header = ["When", "List", "Targets", "Types", "Server", "Rows", "OK", "NODATA", "Failed"]
+            let lines = entries.map { entry in
+                [Self.sheetDate.string(from: entry.date), entry.list ?? "Untitled lookup", String(entry.targetCount), entry.typeNames, entry.server.isEmpty ? "System" : entry.server,
+                 String(entry.rows), String(entry.ok), String(entry.noData), String(entry.failed)]
+            }
+            return export(header: header, lines: lines, as: .tsv)
+        case .watch:
+            return nil
+        }
+    }
     var isFiltered: Bool { !search.isEmpty || outcomes.count < Outcome.allCases.count || onlyDiffers || cloudflareFilter != .any }
 
     var cloudflareTargets: [String: String] {
@@ -552,6 +602,20 @@ struct WatchEvent: Codable, Identifiable {
     let removed: [String]
 }
 
+func clickSelect<ID: Hashable>(_ id: ID, in ids: [ID], selection: inout Set<ID>, anchor: inout ID?) {
+    let flags = NSEvent.modifierFlags
+    if flags.contains(.shift), let from = ids.firstIndex(where: { $0 == anchor }), let to = ids.firstIndex(of: id) {
+        selection.formUnion(ids[min(from, to)...max(from, to)])
+        return
+    }
+    if flags.contains(.command) {
+        if selection.contains(id) { selection.remove(id) } else { selection.insert(id) }
+    } else {
+        selection = [id]
+    }
+    anchor = id
+}
+
 struct HistoryEntry: Codable, Identifiable {
     var id = UUID()
     let date: Date
@@ -564,6 +628,10 @@ struct HistoryEntry: Codable, Identifiable {
     let ok: Int
     let noData: Int
     let failed: Int
+
+    var typeNames: String {
+        (RecordType.lookupOrder.filter(options.types.contains).map(\.description) + (options.dmarc ? ["DMARC"] : [])).joined(separator: ", ")
+    }
 }
 
 struct SavedList: Codable {
