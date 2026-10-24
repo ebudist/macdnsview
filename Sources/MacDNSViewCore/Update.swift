@@ -19,7 +19,18 @@ public struct Release: Equatable, Sendable {
         let reply = try await session.data(for: request)
         struct Body: Decodable { let tag_name: String; let html_url: URL }
         let body = try JSONDecoder().decode(Body.self, from: reply.0)
-        return Release(version: String(body.tag_name.trimmingPrefix("v")), page: body.html_url)
+        guard let release = Release(tag: body.tag_name, page: body.html_url) else { throw URLError(.cannotParseResponse) }
+        return release
+    }
+
+    static let releases = "https://github.com/ebudist/macdnsview/releases/"
+
+    init?(tag: String, page: URL) {
+        let version = String(tag.trimmingPrefix("v"))
+        guard version.wholeMatch(of: /\d+(\.\d+)*/) != nil else { return nil }
+        self.version = version
+        self.page = page.absoluteString.hasPrefix(Self.releases) && page.host() == "github.com"
+            ? page : URL(string: Self.releases + "tag/v" + version)!
     }
 }
 
