@@ -262,3 +262,31 @@ func realLookupThroughSystemConfiguration() async {
     lookup.servers = [Server(host: "192.0.2.1")]
     #expect(await lookup.run(Target.parse("example.com")).allSatisfy { $0.differs == nil })
 }
+
+private actor Asked {
+    var names: [String] = []
+    func add(_ name: String) { names.append(name) }
+}
+
+@Test func eventsMarkEachTargetDoneAndSkipTheFinishedOnes() async {
+    var fake = FakeDNS()
+    fake.answers = ["example.com A": [.a("192.0.2.10")], "10.2.0.192.in-addr.arpa PTR": [.ptr("web.example.com")]]
+    let asked = Asked()
+    var lookup = lookup(fake) { $0.types = [.a]; $0.ptrForEveryAddress = true }
+    let answers = fake
+    lookup.query = { name, type, server in
+        await asked.add(name)
+        return try await answers.query(name, type, server)
+    }
+    let targets = Target.parse("example.com example.net example.org")
+    var log: [String] = []
+    for await event in lookup.events(targets, skipping: [1]) {
+        switch event {
+        case .row(let row): log.append("row \(row.target) \(row.type)")
+        case .done(let i): log.append("done \(targets[i].display)")
+        }
+    }
+    #expect(log.filter { $0.hasPrefix("done") }.sorted() == ["done example.com", "done example.org"])
+    #expect(log.firstIndex(of: "done example.com")! > log.firstIndex(of: "row example.com PTR")!)
+    #expect(await !asked.names.contains("example.net"))
+}

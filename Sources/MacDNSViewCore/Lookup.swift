@@ -109,7 +109,22 @@ public struct Lookup: Sendable {
     public func stream(_ targets: [Target]) -> AsyncStream<Row> {
         AsyncStream { continuation in
             let task = Task {
-                await execute(targets) { continuation.yield($0) }
+                await execute(targets, skipping: []) { if case .row(let row) = $0 { continuation.yield(row) } }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    public enum Event: Sendable {
+        case row(Row)
+        case done(Int)
+    }
+
+    public func events(_ targets: [Target], skipping: Set<Int> = []) -> AsyncStream<Event> {
+        AsyncStream { continuation in
+            let task = Task {
+                await execute(targets, skipping: skipping) { continuation.yield($0) }
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -127,10 +142,11 @@ public struct Lookup: Sendable {
         var server: Server? = nil
     }
 
-    private func execute(_ targets: [Target], emit: (Row) -> Void) async {
+    private func execute(_ targets: [Target], skipping: Set<Int>, emit: (Event) -> Void) async {
         let config = servers.isEmpty ? resolvers() : ResolverConfiguration(defaultServers: [])
         let choices: [Server?] = servers.isEmpty ? [nil] : servers
-        var pending = targets.indices.flatMap { initialJobs(for: targets[$0], at: $0) }.flatMap { job in
+        let wanted = targets.indices.filter { !skipping.contains($0) }
+        var pending = wanted.flatMap { initialJobs(for: targets[$0], at: $0) }.flatMap { job in
             choices.enumerated().map { i, server in
                 var job = job
                 job.order.insert(i, at: 2)
@@ -140,6 +156,8 @@ public struct Lookup: Sendable {
         }[...]
         var index = 0
         var running = 0
+        var outstanding = Dictionary(grouping: pending, by: \.target).mapValues(\.count)
+        for target in wanted where outstanding[target] == nil { emit(.done(target)) }
 
         await withTaskGroup(of: (Job, Server?, Result<Message, Error>, Int?).self) { group in
             func startNext() {
@@ -164,14 +182,16 @@ public struct Lookup: Sendable {
                 running -= 1
                 let (rows, followUps) = interpret(job, server: server, result: result, targets: targets)
                 pending.append(contentsOf: followUps)
+                outstanding[job.target, default: 0] += followUps.count - 1
                 for row in rows {
                     index += 1
                     var row = row
                     row.index = index
                     row.time = time
                     if case .success(let message) = result { row.validated = message.isAuthenticated }
-                    emit(row)
+                    emit(.row(row))
                 }
+                if outstanding[job.target] == 0 { emit(.done(job.target)) }
                 refill()
             }
         }
