@@ -77,3 +77,13 @@ private let rows = [
     let decoded = try JSONDecoder().decode([Row].self, from: JSONEncoder().encode(rows))
     #expect(decoded == rows)
 }
+
+@Test func spreadsheetFormulasAreNeutralized() {
+    let lines = [["=HYPERLINK(\"http://x\")", "+1", "-all", "@SUM(A1)", "v=spf1 -all", "plain"]]
+    let header = ["a", "b", "c", "d", "e", "f"]
+    #expect(export(header: header, lines: lines, as: .csv).split(separator: "\n")[1]
+        == #""'=HYPERLINK(""http://x"")",'+1,'-all,'@SUM(A1),v=spf1 -all,plain"#)
+    #expect(export(header: header, lines: lines, as: .tsv).split(separator: "\n")[1]
+        == "'=HYPERLINK(\"http://x\")\t'+1\t'-all\t'@SUM(A1)\tv=spf1 -all\tplain")
+    #expect(export(header: header, lines: lines, as: .json).contains("\"=HYPERLINK"))
+}

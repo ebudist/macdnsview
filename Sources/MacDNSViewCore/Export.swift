@@ -27,7 +27,7 @@ public func export(_ rows: [Row], as format: ExportFormat, columns: [Int] = Arra
     return switch format {
     case .table: table(header, lines)
     case .csv: delimited(header, lines, separator: ",", escape: csvField)
-    case .tsv: delimited(header, lines, separator: "\t") { $0.replacing(/[\t\r\n]/, with: " ") }
+    case .tsv: delimited(header, lines, separator: "\t", escape: tsvField)
     case .json: json(rows, columns: columns)
     case .html: html(header, lines, errors: rows.map { $0.error != nil })
     }
@@ -37,7 +37,7 @@ public func export(header: [String], lines: [[String]], as format: ExportFormat)
     switch format {
     case .table: return table(header, lines)
     case .csv: return delimited(header, lines, separator: ",", escape: csvField)
-    case .tsv: return delimited(header, lines, separator: "\t") { $0.replacing(/[\t\r\n]/, with: " ") }
+    case .tsv: return delimited(header, lines, separator: "\t", escape: tsvField)
     case .html: return html(header, lines, errors: lines.map { _ in false })
     case .json:
         let objects = lines.map { Dictionary(uniqueKeysWithValues: zip(header, $0)) }
@@ -55,8 +55,17 @@ private func delimited(_ header: [String], _ lines: [[String]], separator: Strin
 
 // RFC 4180: quote a field that holds a comma, quote, or line break, and double its quotes.
 private func csvField(_ field: String) -> String {
+    let field = formulaSafe(field)
     guard field.contains(where: { ",\"\r\n".contains($0) }) else { return field }
     return "\"" + field.replacing("\"", with: "\"\"") + "\""
+}
+
+private func tsvField(_ field: String) -> String { formulaSafe(field).replacing(/[\t\r\n]/, with: " ") }
+
+// Spreadsheets run such a cell as a formula, and record data is written by whoever owns the domain.
+private func formulaSafe(_ field: String) -> String {
+    guard let first = field.first, "=+-@\t\r".contains(first) else { return field }
+    return "'" + field
 }
 
 // ponytail: widths count Characters, so CJK text misaligns by its double width; fine for DNS data.
