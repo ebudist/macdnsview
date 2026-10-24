@@ -72,6 +72,17 @@ struct ContentView: View {
                 }
                 .transition(.opacity)
             }
+            if let update = session.update {
+                VStack {
+                    Spacer()
+                    HStack {
+                        UpdateBanner(session: session, update: update)
+                        Spacer()
+                    }
+                }
+                .padding(12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
             if session.showingSheet || session.showingExport || session.monitor.showingSetup || session.popover != nil {
                 Button("") { session.closeOverlays() }.keyboardShortcut(.cancelAction).hidden()
             } else if session.pane == .results {
@@ -81,6 +92,7 @@ struct ContentView: View {
         }
         .animation(.easeOut(duration: 0.16), value: session.showingSheet || session.showingExport || session.monitor.showingSetup)
         .animation(.easeOut(duration: 0.15), value: session.toast)
+        .animation(.easeOut(duration: 0.2), value: session.update)
         .font(.ui(13))
         .foregroundStyle(Color.t1)
         .background(Color.window)
@@ -101,6 +113,36 @@ struct ContentView: View {
         }
     }
 
+}
+
+private struct UpdateBanner: View {
+    let session: Session
+    let update: Release
+    private static let homebrew = Bundle.main.bundleURL.resolvingSymlinksInPath().path.contains("/Cellar/")
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "arrow.down.circle.fill").font(.system(size: 14)).foregroundStyle(Color.accentText)
+                Text("Update available").font(.ui(13, .bold))
+                Spacer(minLength: 0)
+                IconButton(symbol: "xmark", color: .white(0.5), size: 9, width: 20, height: 20, help: "Hide until the next version") { session.dismissUpdate() }
+            }
+            Text("MacDNSView \(update.version) is out. You have \(version).").font(.ui(12)).foregroundStyle(Color.t2)
+                .fixedSize(horizontal: false, vertical: true)
+            if Self.homebrew {
+                Text("brew upgrade macdnsview").font(.mono(11.5)).foregroundStyle(Color.white(0.85)).textSelection(.enabled)
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.white(0.07)))
+            }
+            SecondaryButton(title: "View Release") { NSWorkspace.shared.open(update.page) }
+        }
+        .padding(12)
+        .frame(width: 228)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.toast))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.white(0.12)))
+        .shadow(color: .black.opacity(0.45), radius: 14, y: 8)
+    }
 }
 
 private struct Sidebar: View {

@@ -20,6 +20,7 @@ struct MacDNSViewApp: App {
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About MacDNSView") { showAbout() }
+                Button("Check for Updates…") { Task { await session.checkForUpdates(manual: true) } }
             }
             CommandGroup(replacing: .newItem) {
                 Button("Targets…") { session.openLookup() }

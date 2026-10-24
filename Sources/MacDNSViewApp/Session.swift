@@ -60,6 +60,8 @@ final class Session {
     var savedLists: [SavedList] { didSet { defaults.set(try? JSONEncoder().encode(savedLists), forKey: "savedLists") } }
     var currentList: String?
     var scrollRequest: Row.ID?
+    private(set) var update: Release?
+    private var updateTimer: Task<Void, Never>?
 
     private(set) var rows: [Row] = []
     private(set) var isRunning = false
@@ -88,6 +90,37 @@ final class Session {
         watchSessions = defaults.data(forKey: "watchSessions").flatMap { try? JSONDecoder().decode([WatchSession].self, from: $0) } ?? []
         history = defaults.data(forKey: "history").flatMap { try? JSONDecoder().decode([HistoryEntry].self, from: $0) } ?? []
         monitor.flash = { [weak self] in self?.flash($0) }
+        startUpdateChecks()
+    }
+
+    private func startUpdateChecks() {
+        updateTimer = Task {
+            while !Task.isCancelled {
+                let last = defaults.object(forKey: "update.lastCheck") as? Date ?? .distantPast
+                let wait = 86_400 - Date().timeIntervalSince(last)
+                if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                await checkForUpdates(manual: false)
+            }
+        }
+    }
+
+    func checkForUpdates(manual: Bool) async {
+        defaults.set(Date(), forKey: "update.lastCheck")
+        do {
+            let latest = try await Release.latest()
+            if Release.isNewer(latest.version, than: version) {
+                if manual || defaults.string(forKey: "update.dismissed") != latest.version { update = latest }
+            } else if manual {
+                flash("MacDNSView \(version) is the latest version")
+            }
+        } catch {
+            if manual { flash("Could not check for updates") }
+        }
+    }
+
+    func dismissUpdate() {
+        defaults.set(update?.version, forKey: "update.dismissed")
+        update = nil
     }
 
     func saveList(as name: String) {
