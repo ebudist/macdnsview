@@ -528,11 +528,19 @@ struct MonitorView: View {
                         }
                     }
                 }
-                if let check = monitor.selectedCheck {
-                    MonitorDetail(check: check, monitor: monitor, session: session)
-                        .frame(width: 320)
-                        .background(Color.inspector)
-                        .overlay(alignment: .leading) { Rectangle().fill(Color.white(0.08)).frame(width: 1) }
+                if session.showingInspector {
+                    Group {
+                        if let check = monitor.selectedCheck {
+                            MonitorDetail(check: check, monitor: monitor, session: session)
+                        } else {
+                            Text(monitor.selection.isEmpty ? "Select a domain to see every server's answer" : "\(monitor.selection.count) domains selected")
+                                .font(.ui(12.5)).foregroundStyle(Color.t3).multilineTextAlignment(.center).padding(24)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    }
+                    .frame(width: 320)
+                    .background(Color.inspector)
+                    .overlay(alignment: .leading) { Rectangle().fill(Color.white(0.08)).frame(width: 1) }
                 }
             }
         }

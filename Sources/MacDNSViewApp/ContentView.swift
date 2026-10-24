@@ -417,10 +417,18 @@ private struct Header: View {
                 IconButton(symbol: "square.and.arrow.up", help: "Export a report of the shown domains") { session.exportMonitor() }
                     .disabled(monitor.checks.isEmpty)
                     .opacity(monitor.checks.isEmpty ? 0.4 : 1)
+                IconButton(symbol: "line.3.horizontal.decrease", color: monitor.isFiltered ? .accentText : .white(0.75), on: monitor.isFiltered,
+                           onBackground: .accent.opacity(0.18), help: "Choose which domains and columns to show") { toggle(.monitorFilter) }
+                    .overlay(alignment: .topTrailing) {
+                        if session.popover == .monitorFilter { MonitorFilterPanel(monitor: monitor).offset(x: 40, y: 32) }
+                    }
             }
             .padding(.horizontal, 2)
             .frame(height: 28)
             .background(RoundedRectangle(cornerRadius: 7).fill(Color.white(0.06)))
+            searchField("Search domains", text: Bindable(monitor).search)
+            IconButton(symbol: "sidebar.right", color: session.showingInspector ? .white(0.9) : .white(0.6), size: 14, height: 28,
+                       on: session.showingInspector, help: "Inspector (⌘I)") { session.showingInspector.toggle() }
         }
     }
 
@@ -543,16 +551,18 @@ private struct Header: View {
         .fixedSize()
     }
 
-    private var searchField: some View {
+    private var searchField: some View { searchField("Search records", text: $session.search) }
+
+    private func searchField(_ placeholder: String, text: Binding<String>) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.white(0.45))
-            TextField("Search records", text: $session.search)
+            TextField(placeholder, text: text)
                 .textFieldStyle(.plain)
                 .font(.ui(13))
                 .foregroundStyle(Color.white(0.9))
-                .onExitCommand { if !session.closeOverlays() { session.search = "" } }
-            if !session.search.isEmpty {
-                Button { session.search = "" } label: {
+                .onExitCommand { if !session.closeOverlays() { text.wrappedValue = "" } }
+            if !text.wrappedValue.isEmpty {
+                Button { text.wrappedValue = "" } label: {
                     Image(systemName: "xmark").font(.system(size: 7, weight: .heavy)).foregroundStyle(Color.window)
                         .frame(width: 14, height: 14).background(Circle().fill(Color.white(0.25)))
                 }
@@ -563,6 +573,44 @@ private struct Header: View {
         .frame(width: 200, height: 28)
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.white(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.white(0.06)))
+    }
+}
+
+private struct MonitorFilterPanel: View {
+    @Bindable var monitor: Monitor
+
+    var body: some View {
+        Panel(radius: 10, padding: 0) {
+            HStack(alignment: .top, spacing: 18) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Domains").font(.ui(12, .bold)).padding(.bottom, 2)
+                    Checkbox(label: "Only where servers disagree", on: monitor.onlyDisagree) { monitor.onlyDisagree.toggle() }
+                    Checkbox(label: "Only with AAAA left over", on: monitor.onlyLeftover) { monitor.onlyLeftover.toggle() }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Columns").font(.ui(12, .bold))
+                        Spacer()
+                        Button("Show All") { monitor.hiddenColumns = [] }
+                            .buttonStyle(.plain)
+                            .font(.ui(12))
+                            .foregroundStyle(Color.accentText)
+                    }
+                    .padding(.bottom, 2)
+                    ForEach(MonitorTable.columnNames.filter { $0 != "Domain" }, id: \.self) { column in
+                        Checkbox(label: column, on: !monitor.hiddenColumns.contains(column), size: 12.5) {
+                            if monitor.hiddenColumns.contains(column) { monitor.hiddenColumns.remove(column) } else { monitor.hiddenColumns.insert(column) }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+        }
+        .frame(width: 400)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -630,7 +678,7 @@ func intervalName(_ seconds: Int) -> String { seconds < 60 ? "\(seconds)s" : "\(
 @MainActor func focusSearch() {
     guard let window = NSApp.keyWindow, let root = window.contentView?.superview else { return }
     func find(_ view: NSView) -> NSTextField? {
-        if let field = view as? NSTextField, field.isEditable, field.placeholderString == "Search records" { return field }
+        if let field = view as? NSTextField, field.isEditable, field.placeholderString?.hasPrefix("Search ") == true { return field }
         return view.subviews.lazy.compactMap(find).first
     }
     if let field = find(root) { window.makeFirstResponder(field) }
