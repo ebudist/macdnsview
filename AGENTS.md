@@ -3,6 +3,7 @@
 macOS app and CLI that looks up DNS records for a list of Targets against any DNS server and exports the results. Behavior follows NirSoft DNSDataView, rebuilt clean-room for macOS.
 
 - Domain terms: `CONTEXT.md`. Use its words in code, docs, issues, and commits.
+- CI and the release steps: `docs/release.md`.
 - Past decisions and their reasons: `docs/adr/`. Read the ADRs before changing DNS transport, server selection, or the build setup.
 
 ## Build and check
