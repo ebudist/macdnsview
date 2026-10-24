@@ -44,6 +44,9 @@ final class Monitor {
 
     private(set) var rows: [Row] = []
     private(set) var isRunning = false
+    private(set) var isPaused = false
+    private var finished = Set<String>()
+    private var runConfig: SavedMonitor?
     private(set) var background: [String: (interval: Int, next: Date)] = [:]
     private(set) var backgroundRunning: String?
     private var backgroundTask: Task<Void, Never>?
@@ -87,7 +90,7 @@ final class Monitor {
     var title: String { name ?? "Propagation Checker" }
     var visibleChecks: [Migration.Check] { checks.filter { filter == nil || $0.status == filter } }
     var selectedCheck: Migration.Check? { selection.count == 1 ? visibleChecks.first { selection.contains($0.target) } : nil }
-    var progress: Double { domainCount == 0 ? 0 : Double(Set(rows.map(\.target)).count) / Double(domainCount) }
+    var progress: Double { domainCount == 0 ? 0 : Double(finished.count) / Double(domainCount) }
 
     func count(_ status: MigrationStatus) -> Int { checks.filter { $0.status == status }.count }
 
@@ -114,22 +117,40 @@ final class Monitor {
     func run() {
         task?.cancel()
         let config = self.config
-        let entries = config.entries
-        guard !entries.isEmpty else { return }
-        let lookup = config.lookup
+        guard !config.entries.isEmpty else { return }
         rows = []
-        domainCount = entries.count
+        finished = []
+        runConfig = config
+        domainCount = config.entries.count
+        isPaused = false
         isRunning = true
+        start(skipping: [])
+    }
+
+    private func start(skipping: Set<Int>) {
+        guard let config = runConfig else { return }
+        let targets = config.entries.map(\.target)
         task = Task {
-            for await row in lookup.stream(entries.map(\.target)) {
+            for await event in config.lookup.events(targets, skipping: skipping) {
                 guard !Task.isCancelled else { return }
-                rows.append(row)
+                switch event {
+                case .row(let row): rows.append(row)
+                case .done(let i): finished.insert(targets[i].display)
+                }
             }
             guard !Task.isCancelled else { return }
             rows = Lookup.canonical(rows)
             isRunning = false
             record(config.checks(rows))
         }
+    }
+
+    func resume() {
+        guard isPaused, let config = runConfig else { return run() }
+        let targets = config.entries.map(\.target)
+        isPaused = false
+        isRunning = true
+        start(skipping: Set(targets.indices.filter { finished.contains(targets[$0].display) }))
     }
 
     private func record(_ new: [Migration.Check]) {
@@ -188,6 +209,8 @@ final class Monitor {
             watchInBackground()
         }
         stop()
+        isPaused = false
+        finished = []
         interval = 0
     }
 
@@ -235,6 +258,10 @@ final class Monitor {
 
     func stop() {
         task?.cancel()
+        if isRunning {
+            rows = rows.filter { finished.contains($0.target) }
+            isPaused = true
+        }
         isRunning = false
     }
 
@@ -270,6 +297,8 @@ final class Monitor {
 
     private func reset() {
         stop()
+        isPaused = false
+        finished = []
         interval = 0
         checks = []
         rows = []
@@ -668,7 +697,7 @@ struct MonitorView: View {
     private var statusText: String {
         let servers = (try? Server.list(parsing: monitor.serverText))?.count ?? 0
         var parts = ["\(monitor.domainCount) domain\(monitor.domainCount == 1 ? "" : "s")", servers == 0 ? "system resolver" : "\(servers) server\(servers == 1 ? "" : "s")"]
-        if monitor.isRunning { parts.append("checking") } else if let last = monitor.lastRun { parts.append("checked at \(last.formatted(date: .omitted, time: .standard))") }
+        if monitor.isRunning { parts.append("checking") } else if monitor.isPaused { parts.append("paused") } else if let last = monitor.lastRun { parts.append("checked at \(last.formatted(date: .omitted, time: .standard))") }
         if monitor.interval > 0, !monitor.isRunning, let next = monitor.nextRun {
             parts.append("next check at \(next.formatted(date: .omitted, time: .standard))")
         }

@@ -27,7 +27,7 @@ struct MacDNSViewApp: App {
                 Button("Refresh") { session.run() }
                     .keyboardShortcut("r")
                     .disabled(session.targetsText.isEmpty)
-                Button("Stop") { session.stop() }
+                Button("Pause") { session.stop() }
                     .keyboardShortcut(".")
                     .disabled(!session.isRunning)
             }

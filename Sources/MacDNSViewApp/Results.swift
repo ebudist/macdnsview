@@ -173,7 +173,7 @@ struct ResultsView: View {
         if !session.isRunning, !session.changed.isEmpty || !session.removed.isEmpty {
             parts.append(("\(session.changed.count) changed, \(session.removed.count) gone since the last run", .accentText))
         }
-        if session.wasStopped { parts.append(("stopped after \(Set(rows.map(\.target)).count) of \(session.targetCount) targets", .warn)) }
+        if session.isPaused { parts.append(("paused after \(Set(rows.map(\.target)).count) of \(session.targetCount) targets", .warn)) }
         if session.autoRefresh > 0, !session.isRunning, let next = session.nextRefresh {
             parts.append(("next refresh at \(next.formatted(date: .omitted, time: .standard))", .t2))
         }

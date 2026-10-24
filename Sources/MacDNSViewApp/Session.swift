@@ -65,6 +65,10 @@ final class Session {
     private(set) var isRunning = false
     private(set) var targetCount = 0
     private(set) var wasStopped = false
+    private(set) var isPaused = false
+    private var finished = Set<String>()
+    private var runTargets: [Target] = []
+    private var runLookup: Lookup?
     private(set) var changed = Set<Row.ID>()
     private(set) var removed: [Row] = []
     private(set) var finishedAt: Date?
@@ -265,6 +269,8 @@ final class Session {
         removed = []
         previous = nil
         isRunning = false
+        isPaused = false
+        finished = []
         wasStopped = false
         targetCount = 0
         problem = nil
@@ -330,12 +336,25 @@ final class Session {
         runKey = targetsText + "\n" + serverText
         targetCount = targets.count
         wasStopped = false
+        isPaused = false
+        finished = []
+        runTargets = targets
+        runLookup = lookup
         isRunning = !targets.isEmpty
         pane = pane == .watch ? .watch : .results
+        start(skipping: [])
+    }
+
+    private func start(skipping: Set<Int>) {
+        guard let lookup = runLookup else { return }
+        let targets = runTargets
         task = Task {
-            for await row in lookup.stream(targets) {
+            for await event in lookup.events(targets, skipping: skipping) {
                 guard !Task.isCancelled else { return }
-                rows.append(row)
+                switch event {
+                case .row(let row): rows.append(row)
+                case .done(let i): finished.insert(targets[i].display)
+                }
             }
             guard !Task.isCancelled else { return }
             settle()
@@ -345,8 +364,18 @@ final class Session {
     func stop() {
         guard isRunning else { return }
         task?.cancel()
+        rows = rows.filter { finished.contains($0.target) }
+        isRunning = false
+        isPaused = true
         wasStopped = true
-        settle()
+    }
+
+    func resume() {
+        guard isPaused else { return run() }
+        isPaused = false
+        wasStopped = false
+        isRunning = true
+        start(skipping: Set(runTargets.indices.filter { finished.contains(runTargets[$0].display) }))
     }
 
     private func scheduleRefresh() {
@@ -432,6 +461,8 @@ final class Session {
         removed = []
         previous = nil
         isRunning = false
+        isPaused = false
+        finished = []
         wasStopped = false
         targetCount = entry.targetCount
         finishedAt = entry.date
@@ -535,7 +566,7 @@ extension Session {
     }
 
     var progress: Double {
-        targetCount == 0 ? 0 : Double(Set(rows.map(\.target)).count) / Double(targetCount)
+        targetCount == 0 ? 0 : Double(finished.count) / Double(targetCount)
     }
 }
 
