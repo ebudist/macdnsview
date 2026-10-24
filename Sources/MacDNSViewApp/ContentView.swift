@@ -402,16 +402,7 @@ private struct Header: View {
     private var monitorControls: some View {
         let monitor = session.monitor
         return HStack(spacing: 8) {
-            HoverButton(action: session.openMonitorSetup, normal: .amber, hover: .amber.opacity(0.85), radius: 15) {
-                HStack(spacing: 6) {
-                    Image(systemName: "slider.horizontal.3").font(.system(size: 12, weight: .semibold))
-                    Text("Set Up").font(.ui(13, .semibold))
-                }
-                .foregroundStyle(Color.black.opacity(0.85))
-                .padding(.leading, 12)
-                .padding(.trailing, 14)
-                .frame(height: 30)
-            }
+            AmberButton(title: "Set Up", symbol: "slider.horizontal.3", action: session.openMonitorSetup)
             .help("Domains, expected IPs, and servers")
             HStack(spacing: 0) {
                 IconButton(symbol: "square.and.arrow.up", help: "Export a report of the shown domains") { session.exportMonitor() }
@@ -501,16 +492,7 @@ private struct Header: View {
 
     private var controls: some View {
         HStack(spacing: 8) {
-            HoverButton(action: session.openLookup, normal: .amber, hover: .amber.opacity(0.85), radius: 15) {
-                HStack(spacing: 6) {
-                    Image(systemName: "scope").font(.system(size: 12, weight: .semibold))
-                    Text("Targets").font(.ui(13, .semibold))
-                }
-                .foregroundStyle(Color.black.opacity(0.85))
-                .padding(.leading, 12)
-                .padding(.trailing, 14)
-                .frame(height: 30)
-            }
+            AmberButton(title: "Targets", symbol: "scope", action: session.openLookup)
             .help("Targets and options (⌘K)")
             HStack(spacing: 0) {
                 IconButton(symbol: "square.and.arrow.up", help: "Export (⌘S)") { session.openExport() }

@@ -561,7 +561,7 @@ struct MonitorView: View {
                 .foregroundStyle(Color.white(0.5))
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
-            PrimaryButton(height: 28, radius: 7, action: session.openMonitorSetup) { Text("Set Up…") }
+            AmberButton(title: "Set Up", symbol: "slider.horizontal.3", action: session.openMonitorSetup)
                 .padding(.top, 10)
         }
         .padding(40)

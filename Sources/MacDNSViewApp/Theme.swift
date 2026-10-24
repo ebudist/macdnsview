@@ -71,6 +71,25 @@ struct IconButton: View {
     }
 }
 
+struct AmberButton: View {
+    let title: String
+    let symbol: String
+    let action: () -> Void
+
+    var body: some View {
+        HoverButton(action: action, normal: .amber, hover: .amber.opacity(0.85), radius: 15) {
+            HStack(spacing: 6) {
+                Image(systemName: symbol).font(.system(size: 12, weight: .semibold))
+                Text(title).font(.ui(13, .semibold))
+            }
+            .foregroundStyle(Color.black.opacity(0.85))
+            .padding(.leading, 12)
+            .padding(.trailing, 14)
+            .frame(height: 30)
+        }
+    }
+}
+
 struct PrimaryButton<Label: View>: View {
     var height: CGFloat = 26
     var radius: CGFloat = 6
