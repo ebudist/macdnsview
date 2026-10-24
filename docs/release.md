@@ -23,7 +23,7 @@ scripts/check-prose.sh --commits origin/main..HEAD
 
 ## CI: `ci.yml`
 
-Runs on `macos-latest` for every push to `main` and every pull request, with a read-only token.
+Runs on `macos-latest` for every push to `main` and every pull request, with a read-only token. Pushes and pull requests that only change Markdown files or `docs/` skip it, so run the prose check locally for those.
 
 1. Check out the full history, which the prose check needs.
 2. Check prose for the commits in the push, or for all commits of a pull request against its base branch.
