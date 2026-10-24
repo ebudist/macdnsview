@@ -30,11 +30,10 @@ A change is done when all three pass. With Command Line Tools only (no Xcode), S
 
 Covers docs, code comments, issues, commit messages, and PR descriptions.
 
-- Plain English, short sentences, written as the project engineer. Docs use neutral or imperative voice; ADRs and PR descriptions may use "I".
+- Plain English and short sentences. Docs use neutral or imperative voice; ADRs and PR descriptions may use "I".
 - Use commas, colons, periods, or parentheses where a dash might go. `scripts/check-prose.sh` holds the full list of rejected characters and words.
 - Commits: one-line conventional commit subject (`feat:`, `fix:`, `docs:`, `chore:`, ...), no body. Detail goes in the PR description.
 - PR descriptions open with two or three sentences on why the change exists, then what changed. A PR that resolves a GitHub issue says `Fixes #N`.
-- Authorship stays with the human committer: commits and PRs carry no assistant attribution.
 
 ## Clean-room
 
