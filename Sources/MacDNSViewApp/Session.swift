@@ -59,6 +59,7 @@ final class Session {
     var columnWidths: [String: Double] { didSet { defaults.set(columnWidths, forKey: "columnWidths") } }
     var savedLists: [SavedList] { didSet { defaults.set(try? JSONEncoder().encode(savedLists), forKey: "savedLists") } }
     var currentList: String?
+    var scrollRequest: Row.ID?
 
     private(set) var rows: [Row] = []
     private(set) var isRunning = false
@@ -207,6 +208,7 @@ final class Session {
         let current = rows.firstIndex { selection.contains($0.id) } ?? (offset > 0 ? -1 : rows.count)
         selectionAnchor = rows[min(max(current + offset, 0), rows.count - 1)].id
         selection = [selectionAnchor!]
+        scrollRequest = selectionAnchor
     }
 
     func newList() {

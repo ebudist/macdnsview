@@ -205,7 +205,8 @@ private struct ResultsGrid: View {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         SwiftUI.Section {
                             ForEach(Array(rows.enumerated()), id: \.element.id) { k, row in
-                                rowView(row, odd: k % 2 == 1, columns: columns, widths: widths).id(row.id)
+                                rowView(row, odd: k % 2 == 1, columns: columns, widths: widths)
+                                    .background(alignment: .leading) { Color.clear.frame(width: min(total, geo.size.width)).id(row.id) }
                             }
                             if !session.isRunning, !session.rows.isEmpty, session.visibleRows.isEmpty { noMatch }
                         } header: {
@@ -215,8 +216,9 @@ private struct ResultsGrid: View {
                     .padding(.bottom, 12)
                     .frame(width: max(total, geo.size.width), alignment: .leading)
                 }
-                .onChange(of: session.selection) { _, selection in
-                    if selection.count == 1, let id = selection.first { proxy.scrollTo(id) }
+                .onChange(of: session.scrollRequest) { _, id in
+                    if let id { proxy.scrollTo(id) }
+                    session.scrollRequest = nil
                 }
             }
         }
