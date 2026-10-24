@@ -332,6 +332,15 @@ private struct Header: View {
                 if session.popover == .autoRefresh, !monitor { autoRefreshMenu.offset(y: 36) }
                 if session.popover == .monitorInterval, monitor { monitorIntervalMenu.offset(y: 36) }
             }
+            if watching > 0, let next = monitor ? session.monitor.nextRun : session.nextRefresh {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let left = max(0, Int(next.timeIntervalSince(context.date).rounded(.up)))
+                    Text(left < 60 ? "\(left)s" : String(format: "%d:%02d", left / 60, left % 60))
+                        .font(.ui(12, .medium)).monospacedDigit().foregroundStyle(Color.watch)
+                        .frame(width: 38, alignment: .leading)
+                }
+                .help("Next check")
+            }
         }
     }
 
