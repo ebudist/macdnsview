@@ -152,11 +152,11 @@ private struct Sidebar: View {
                 Text(saved.name).lineLimit(1).truncationMode(.tail).foregroundStyle(on ? Color.white : .t1)
                 Spacer(minLength: 0)
                 if watched {
-                    Circle().fill(Color.ok).frame(width: 6, height: 6)
+                    Circle().fill(Color.watch).frame(width: 6, height: 6)
                         .help(session.monitor.backgroundRunning == saved.name ? "Checking now" : "Watching")
                 }
                 Text(session.monitor.progress(saved.name) ?? String(Migration.parse(saved.targets, kind: .record(.a)).count))
-                    .font(.ui(11)).monospacedDigit().foregroundStyle(watched ? Color.ok : .white(0.35))
+                    .font(.ui(11)).monospacedDigit().foregroundStyle(watched ? Color.watch : .white(0.35))
             }
             .font(.ui(12.5))
             .padding(.leading, 24)
@@ -196,10 +196,10 @@ private struct Sidebar: View {
                     Text(badge)
                         .font(.ui(11, .semibold))
                         .monospacedDigit()
-                        .foregroundStyle(live ? Color.ok : .t2)
+                        .foregroundStyle(live ? Color.watch : .t2)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
-                        .background(Capsule().fill(live ? Color.ok.opacity(0.2) : .white(0.1)))
+                        .background(Capsule().fill(live ? Color.watch.opacity(0.2) : .white(0.1)))
                 }
             }
             .font(.ui(13))
