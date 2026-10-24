@@ -721,7 +721,7 @@ struct MonitorView: View {
     }
 }
 
-private struct MonitorTable: View {
+struct MonitorTable: View {
     let monitor: Monitor
     let session: Session
 
@@ -733,7 +733,9 @@ private struct MonitorTable: View {
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     ForEach(Array(Self.columns.enumerated()), id: \.offset) { i, column in
-                        Text(column.0).padding(.horizontal, 8).frame(width: widths[i], alignment: column.0 == "TTL" || column.0 == "Migrated" ? .trailing : .leading)
+                        if shown(column.0) {
+                            Text(column.0).padding(.horizontal, 8).frame(width: widths[i], alignment: column.0 == "TTL" || column.0 == "Migrated" ? .trailing : .leading)
+                        }
                     }
                 }
                 .font(.ui(11.5, .semibold))
@@ -757,19 +759,23 @@ private struct MonitorTable: View {
     private func row(_ check: Migration.Check, odd: Bool, widths: [CGFloat]) -> some View {
         let selected = monitor.selection.contains(check.target)
         return HStack(spacing: 0) {
-            HStack(spacing: 5) {
-                StatusPill(status: check.status)
-                if let leftover = check.leftoverAAAA { LeftoverMark(addresses: leftover) }
+            if shown("Status") {
+                HStack(spacing: 5) {
+                    StatusPill(status: check.status)
+                    if let leftover = check.leftoverAAAA { LeftoverMark(addresses: leftover) }
+                }
+                .padding(.horizontal, 8)
+                .frame(width: widths[0], alignment: .leading)
             }
-            .padding(.horizontal, 8)
-            .frame(width: widths[0], alignment: .leading)
             Text(check.target).fontWeight(.medium).foregroundStyle(Color.white(0.92)).cell(widths[1])
-            Text(check.expected.joined(separator: ", ")).font(.mono(12)).foregroundStyle(Color.t2).cell(widths[2])
-            answers(check).cell(widths[3])
-            Text(check.ttl.map(String.init) ?? "").font(.mono(12)).foregroundStyle(Color.t2).cell(widths[4], trailing: true)
-            Text(monitor.migratedAt[check.target].map { $0.formatted(date: .omitted, time: .shortened) } ?? "").font(.ui(12)).foregroundStyle(Color.ok).monospacedDigit()
-                .cell(widths[5], trailing: true)
-                .help(monitor.migratedAt[check.target].map { "First seen migrated \($0.formatted(date: .abbreviated, time: .standard))" } ?? "")
+            if shown("Expected") { Text(check.expected.joined(separator: ", ")).font(.mono(12)).foregroundStyle(Color.t2).cell(widths[2]) }
+            if shown("Answers by server") { answers(check).cell(widths[3]) }
+            if shown("TTL") { Text(check.ttl.map(String.init) ?? "").font(.mono(12)).foregroundStyle(Color.t2).cell(widths[4], trailing: true) }
+            if shown("Migrated") {
+                Text(monitor.migratedAt[check.target].map { $0.formatted(date: .omitted, time: .shortened) } ?? "").font(.ui(12)).foregroundStyle(Color.ok).monospacedDigit()
+                    .cell(widths[5], trailing: true)
+                    .help(monitor.migratedAt[check.target].map { "First seen migrated \($0.formatted(date: .abbreviated, time: .standard))" } ?? "")
+            }
         }
         .font(.ui(12))
         .frame(height: 28)
@@ -821,10 +827,15 @@ private struct MonitorTable: View {
         return check.status == .unexpected ? MigrationStatus.unexpected.color : .t1
     }
 
+    static let columnNames = columns.map(\.0)
+
+    private func shown(_ column: String) -> Bool { column == "Domain" || !monitor.hiddenColumns.contains(column) }
+
     private func widths(_ total: CGFloat) -> [CGFloat] {
-        let fixed = Self.columns.compactMap(\.1).reduce(0, +)
-        let fractions = Self.columns.map(\.2).reduce(0, +)
-        return Self.columns.map { $0.1 ?? max(80, (total - fixed) * $0.2 / fractions) }
+        let visible = Self.columns.filter { shown($0.0) }
+        let fixed = visible.compactMap(\.1).reduce(0, +)
+        let fractions = visible.map(\.2).reduce(0, +)
+        return Self.columns.map { shown($0.0) ? $0.1 ?? max(80, (total - fixed) * $0.2 / fractions) : 0 }
     }
 }
 
