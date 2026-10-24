@@ -39,6 +39,10 @@ final class Monitor {
     var savingName: String?
     var problem: String?
     var filter: MigrationStatus?
+    var search = ""
+    var onlyDisagree = false
+    var onlyLeftover = false
+    var hiddenColumns: Set<String> { didSet { defaults.set(Array(hiddenColumns), forKey: "monitor.hiddenColumns") } }
     var selection = Set<String>()
     var selectionAnchor: String?
 
@@ -62,6 +66,7 @@ final class Monitor {
         typeName = defaults.string(forKey: "monitor.type") ?? "A"
         name = defaults.string(forKey: "monitor.name")
         includeWWW = defaults.bool(forKey: "monitor.www")
+        hiddenColumns = Set(defaults.stringArray(forKey: "monitor.hiddenColumns") ?? [])
         saved = defaults.data(forKey: "monitor.saved").flatMap { try? JSONDecoder().decode([SavedMonitor].self, from: $0) } ?? []
         events = defaults.data(forKey: "monitor.events").flatMap { try? JSONDecoder().decode([MonitorEvent].self, from: $0) } ?? []
         migratedAt = defaults.data(forKey: "monitor.migratedAt").flatMap { try? JSONDecoder().decode([String: Date].self, from: $0) } ?? [:]
@@ -88,7 +93,16 @@ final class Monitor {
     var newValues: [String] { config.newValues }
     var oldValues: [String] { config.oldValues }
     var title: String { name ?? "Propagation Checker" }
-    var visibleChecks: [Migration.Check] { checks.filter { filter == nil || $0.status == filter } }
+    var isFiltered: Bool { onlyDisagree || onlyLeftover }
+    var visibleChecks: [Migration.Check] {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        return checks.filter { check in
+            (filter == nil || check.status == filter)
+                && (!onlyDisagree || Set(check.answers.values.map(Set.init)).count > 1)
+                && (!onlyLeftover || check.leftoverAAAA != nil)
+                && (query.isEmpty || ([check.target] + check.expected + check.answers.values.joined()).contains { $0.localizedCaseInsensitiveContains(query) })
+        }
+    }
     var selectedCheck: Migration.Check? { selection.count == 1 ? visibleChecks.first { selection.contains($0.target) } : nil }
     var progress: Double { domainCount == 0 ? 0 : Double(finished.count) / Double(domainCount) }
 
@@ -701,7 +715,7 @@ struct MonitorView: View {
         if monitor.interval > 0, !monitor.isRunning, let next = monitor.nextRun {
             parts.append("next check at \(next.formatted(date: .omitted, time: .standard))")
         }
-        if monitor.filter != nil { parts.append("\(monitor.visibleChecks.count) shown") }
+        if monitor.visibleChecks.count != monitor.checks.count { parts.append("\(monitor.visibleChecks.count) shown") }
         if monitor.leftoverCount > 0 { parts.append("\(monitor.leftoverCount) with AAAA left over") }
         return parts.joined(separator: " · ")
     }
