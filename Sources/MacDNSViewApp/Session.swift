@@ -283,10 +283,25 @@ final class Session {
         cloudflareFilter = .any
     }
 
-    func runList(_ name: String) {
+    func openList(_ name: String) {
         guard let list = savedLists.first(where: { $0.name == name }) else { return }
+        if let last = history.first(where: { $0.list == name && hasStoredRows($0) }) {
+            openResults(last)
+        } else {
+            task?.cancel()
+            rows = []
+            selection = []
+            changed = []
+            removed = []
+            previous = nil
+            isRunning = false
+            isPaused = false
+            finished = []
+            wasStopped = false
+            targetCount = Target.parse(list.targets, extractHostFromURL: list.options.extractHostFromURL).count
+            pane = .results
+        }
         loadList(list)
-        run()
     }
 
     func rerun(_ entry: HistoryEntry) {

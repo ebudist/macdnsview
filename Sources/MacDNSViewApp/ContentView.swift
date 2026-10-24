@@ -146,7 +146,6 @@ private struct Sidebar: View {
         return HoverButton(action: {
             session.monitor.load(saved)
             session.pane = .monitor
-            session.monitor.run()
         }, normal: on ? .white(0.08) : .clear, hover: .white(0.06), radius: 6) {
             HStack(spacing: 9) {
                 Image(systemName: "bookmark").font(.system(size: 11, weight: .medium)).foregroundStyle(on ? Color.accentText : .t3).frame(width: 16)
@@ -212,7 +211,7 @@ private struct Sidebar: View {
     private func savedList(_ list: SavedList) -> some View {
         let on = session.currentList == list.name && session.pane == .results
         let count = Target.parse(list.targets, extractHostFromURL: list.options.extractHostFromURL).count
-        return HoverButton(action: { session.runList(list.name) }, normal: on ? .white(0.08) : .clear, hover: .white(0.06), radius: 6) {
+        return HoverButton(action: { session.openList(list.name) }, normal: on ? .white(0.08) : .clear, hover: .white(0.06), radius: 6) {
             HStack(spacing: 9) {
                 Image(systemName: "bookmark").font(.system(size: 11, weight: .medium)).foregroundStyle(on ? Color.accentText : .t3).frame(width: 16)
                 Text(list.name).lineLimit(1).truncationMode(.tail).foregroundStyle(on ? Color.white : .t1)
