@@ -269,6 +269,7 @@ private struct Header: View {
                 Text(subtitle).font(.ui(11)).foregroundStyle(Color.white(0.5)).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if session.pane == .results || session.pane == .monitor { runControls.padding(.trailing, 16) }
             if session.pane == .results { controls }
             if session.pane == .history { historyControls }
             if session.pane == .monitor { monitorControls }
@@ -277,18 +278,87 @@ private struct Header: View {
         .padding(.trailing, 12)
         .frame(height: 52)
         .overlay(alignment: .bottom) { Rectangle().fill(Color.white(0.08)).frame(height: 1) }
-        .overlay(alignment: .bottomLeading) {
-            let running = session.pane == .monitor ? session.monitor.isRunning : session.isRunning
-            let progress = session.pane == .monitor ? session.monitor.progress : session.progress
-            if running {
-                GeometryReader { geo in
-                    Rectangle().fill(Color.accent).frame(width: geo.size.width * progress, height: 2)
-                        .animation(.linear(duration: 0.1), value: progress)
+    }
+
+    private var runControls: some View {
+        let monitor = session.pane == .monitor
+        let running = monitor ? session.monitor.isRunning : session.isRunning
+        let paused = monitor ? session.monitor.isPaused : session.isPaused
+        let empty = monitor ? session.monitor.entries.isEmpty : session.targetsText.isEmpty
+        let progress = monitor ? session.monitor.progress : session.progress
+        return HStack(spacing: 8) {
+            if running || paused || progress > 0 {
+                HStack(spacing: 8) {
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white(0.12))
+                        Capsule().fill(progress >= 1 ? Color.ok : paused ? .warn : .accent).frame(width: 120 * progress)
+                            .animation(.linear(duration: 0.1), value: progress)
+                    }
+                    .frame(width: 120, height: 6)
+                    Text("\(Int(progress * 100))%").font(.ui(12, .medium)).monospacedDigit()
+                        .foregroundStyle(progress >= 1 ? Color.ok : .white(0.6)).frame(width: 36, alignment: .leading)
                 }
-                .frame(height: 2)
-                .offset(y: 1)
+            }
+            if running {
+                capsule("Pause", fill: .bad, help: "Pause and keep the finished domains (⌘.)") { monitor ? session.monitor.stop() : session.stop() }
+            } else {
+                capsule(paused ? "Resume" : "Run", fill: .ok, help: paused ? "Continue with the domains not checked yet" : "Run") {
+                    if monitor {
+                        if session.monitor.problemText() == nil { session.monitor.resume() } else { session.openMonitorSetup() }
+                    } else {
+                        session.resume()
+                    }
+                }
+                .disabled(empty)
+                .opacity(empty ? 0.4 : 1)
+            }
+            IconButton(symbol: "arrow.clockwise", size: 14, width: 32, height: 30, help: "Start over from the first domain (⌘R)") {
+                if monitor {
+                    if session.monitor.problemText() == nil { session.monitor.run() } else { session.openMonitorSetup() }
+                } else {
+                    session.run()
+                }
+            }
+            .disabled(empty)
+            .opacity(empty ? 0.4 : 1)
+            let watching = monitor ? session.monitor.interval : session.autoRefresh
+            IconButton(symbol: "timer", color: watching > 0 ? .watch : .white(0.75), size: 14, width: 32, height: 30, on: watching > 0,
+                       onBackground: .watch.opacity(0.18), help: watching > 0 ? "Watching every \(intervalName(watching))" : monitor ? "Watch: check again on a timer" : "Auto refresh") {
+                toggle(monitor ? .monitorInterval : .autoRefresh)
+            }
+            .disabled(empty)
+            .opacity(empty ? 0.4 : 1)
+            .overlay(alignment: .topTrailing) {
+                if session.popover == .autoRefresh, !monitor { autoRefreshMenu.offset(y: 36) }
+                if session.popover == .monitorInterval, monitor { monitorIntervalMenu.offset(y: 36) }
             }
         }
+    }
+
+    private var monitorIntervalMenu: some View {
+        let monitor = session.monitor
+        return Panel {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Watch").font(.ui(11, .semibold)).foregroundStyle(Color.white(0.4)).padding(.horizontal, 9).padding(.vertical, 5)
+                ForEach(Session.intervals, id: \.seconds) { interval in
+                    MenuItem(label: interval.menu, checked: monitor.interval == interval.seconds) {
+                        monitor.interval = interval.seconds
+                        session.popover = nil
+                    }
+                }
+                Text("Stops by itself once every domain is migrated, proxied, or failed.")
+                    .font(.ui(11)).foregroundStyle(Color.white(0.4)).padding(.horizontal, 9).padding(.top, 6).padding(.bottom, 4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(width: 220)
+    }
+
+    private func capsule(_ title: String, fill: Color, help: String, action: @escaping () -> Void) -> some View {
+        HoverButton(action: action, normal: fill, hover: fill.opacity(0.8), radius: 15) {
+            Text(title).font(.ui(13, .semibold)).foregroundStyle(.white).frame(width: 84, height: 30)
+        }
+        .help(help)
     }
 
     private var title: String {
@@ -335,42 +405,9 @@ private struct Header: View {
             }
             .help("Domains, expected IPs, and servers")
             HStack(spacing: 0) {
-                if monitor.isRunning {
-                    IconButton(symbol: "stop.fill", color: .bad, help: "Stop") { monitor.stop() }
-                } else {
-                    IconButton(symbol: "arrow.clockwise", help: "Check every domain again") {
-                        if monitor.problemText() == nil { monitor.run() } else { session.openMonitorSetup() }
-                    }
-                    .disabled(monitor.entries.isEmpty)
-                    .opacity(monitor.entries.isEmpty ? 0.4 : 1)
-                }
                 IconButton(symbol: "square.and.arrow.up", help: "Export a report of the shown domains") { session.exportMonitor() }
                     .disabled(monitor.checks.isEmpty)
                     .opacity(monitor.checks.isEmpty ? 0.4 : 1)
-                IconButton(symbol: "timer", color: monitor.interval > 0 ? .ok : .white(0.75), on: monitor.interval > 0,
-                           onBackground: .ok.opacity(0.14), help: "Watch: check again on a timer") { toggle(.monitorInterval) }
-                    .disabled(monitor.entries.isEmpty)
-                    .opacity(monitor.entries.isEmpty ? 0.4 : 1)
-                    .overlay(alignment: .topTrailing) {
-                        if session.popover == .monitorInterval {
-                            Panel {
-                                VStack(alignment: .leading, spacing: 0) {
-                                    Text("Watch").font(.ui(11, .semibold)).foregroundStyle(Color.white(0.4)).padding(.horizontal, 9).padding(.vertical, 5)
-                                    ForEach(Session.intervals, id: \.seconds) { interval in
-                                        MenuItem(label: interval.menu, checked: monitor.interval == interval.seconds) {
-                                            monitor.interval = interval.seconds
-                                            session.popover = nil
-                                        }
-                                    }
-                                    Text("Stops by itself once every domain is migrated, proxied, or failed.")
-                                        .font(.ui(11)).foregroundStyle(Color.white(0.4)).padding(.horizontal, 9).padding(.top, 6).padding(.bottom, 4)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                            .frame(width: 220)
-                            .offset(y: 32)
-                        }
-                    }
             }
             .padding(.horizontal, 2)
             .frame(height: 28)
@@ -459,18 +496,6 @@ private struct Header: View {
             }
             .help("Targets and options (⌘K)")
             HStack(spacing: 0) {
-                if session.isRunning {
-                    IconButton(symbol: "stop.fill", color: .bad, help: "Stop (⌘.)") { session.stop() }
-                } else {
-                    IconButton(symbol: "arrow.clockwise", help: "Look up the same Targets again (⌘R)") { session.run() }
-                        .disabled(session.targetsText.isEmpty)
-                        .opacity(session.targetsText.isEmpty ? 0.4 : 1)
-                }
-                IconButton(symbol: "timer", color: session.autoRefresh > 0 ? .ok : .white(0.75), on: session.autoRefresh > 0,
-                           onBackground: .ok.opacity(0.14), help: "Auto refresh") { toggle(.autoRefresh) }
-                    .overlay(alignment: .topLeading) {
-                        if session.popover == .autoRefresh { autoRefreshMenu.offset(x: -60, y: 32) }
-                    }
                 IconButton(symbol: "square.and.arrow.up", help: "Export (⌘S)") { session.openExport() }
                     .disabled(session.rows.isEmpty)
                     .opacity(session.rows.isEmpty ? 0.4 : 1)
