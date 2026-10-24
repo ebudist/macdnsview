@@ -49,8 +49,8 @@ cat > "$app/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-codesign --force --sign - "$app"
-codesign --force --sign - dist/macdnsview
+codesign --force --options runtime --sign - "$app"
+codesign --force --options runtime --sign - dist/macdnsview
 
 [ -n "$zip" ] || exit 0
 ditto -c -k --norsrc --noextattr --keepParent "$app" "dist/MacDNSView-$version.zip"
