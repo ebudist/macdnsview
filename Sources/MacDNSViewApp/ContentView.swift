@@ -402,15 +402,15 @@ private struct Header: View {
     private var monitorControls: some View {
         let monitor = session.monitor
         return HStack(spacing: 8) {
-            HoverButton(action: session.openMonitorSetup, normal: .accent, hover: .accentHover, radius: 7) {
+            HoverButton(action: session.openMonitorSetup, normal: .amber, hover: .amber.opacity(0.85), radius: 15) {
                 HStack(spacing: 6) {
                     Image(systemName: "slider.horizontal.3").font(.system(size: 12, weight: .semibold))
-                    Text("Set Up").font(.ui(13, .medium))
+                    Text("Set Up").font(.ui(13, .semibold))
                 }
-                .foregroundStyle(.white)
-                .padding(.leading, 9)
-                .padding(.trailing, 11)
-                .frame(height: 28)
+                .foregroundStyle(Color.black.opacity(0.85))
+                .padding(.leading, 12)
+                .padding(.trailing, 14)
+                .frame(height: 30)
             }
             .help("Domains, expected IPs, and servers")
             HStack(spacing: 0) {
@@ -493,15 +493,15 @@ private struct Header: View {
 
     private var controls: some View {
         HStack(spacing: 8) {
-            HoverButton(action: session.openLookup, normal: .accent, hover: .accentHover, radius: 7) {
+            HoverButton(action: session.openLookup, normal: .amber, hover: .amber.opacity(0.85), radius: 15) {
                 HStack(spacing: 6) {
-                    Image(systemName: "globe").font(.system(size: 12, weight: .semibold))
-                    Text("Look Up").font(.ui(13, .medium))
+                    Image(systemName: "scope").font(.system(size: 12, weight: .semibold))
+                    Text("Targets").font(.ui(13, .semibold))
                 }
-                .foregroundStyle(.white)
-                .padding(.leading, 9)
-                .padding(.trailing, 11)
-                .frame(height: 28)
+                .foregroundStyle(Color.black.opacity(0.85))
+                .padding(.leading, 12)
+                .padding(.trailing, 14)
+                .frame(height: 30)
             }
             .help("Targets and options (⌘K)")
             HStack(spacing: 0) {

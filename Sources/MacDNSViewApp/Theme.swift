@@ -12,7 +12,7 @@ extension Color {
     static let t1 = white(0.88), t2 = white(0.55), t3 = white(0.32)
     static let accent = Color(hex: 0x0A84FF), accentText = Color(hex: 0x4DA3FF), accentHover = Color(hex: 0x2A94FF)
     static let ok = Color(hex: 0x30D158), warn = Color(hex: 0xFF9F0A), bad = Color(hex: 0xFF453A), problem = Color(hex: 0xFF6961)
-    static let watch = Color(hex: 0xBF5AF2)
+    static let watch = Color(hex: 0xBF5AF2), amber = Color(hex: 0xFFB340)
     static let cloudflare = Color(hex: 0xF38020)
     static let window = Color(hex: 0x1E1E1E), sidebar = Color(hex: 0x282828), inspector = Color(hex: 0x1C1C1C), statusBar = Color(hex: 0x232323)
     static let sheet = Color(hex: 0x2A2A2A), popover = Color(hex: 0x2C2C2E), menu = Color(hex: 0x353537), field = Color(hex: 0x1C1C1C)

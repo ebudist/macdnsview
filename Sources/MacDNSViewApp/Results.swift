@@ -69,7 +69,7 @@ struct ResultsView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
             HStack(spacing: 10) {
-                PrimaryButton(height: 28, radius: 7, action: session.openLookup) { Text("Look Up…") }
+                PrimaryButton(height: 28, radius: 7, action: session.openLookup) { Text("Targets…") }
                 Text("⌘K").font(.ui(12)).foregroundStyle(Color.white(0.35))
             }
             .padding(.top, 10)

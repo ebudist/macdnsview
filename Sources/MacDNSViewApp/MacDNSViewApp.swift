@@ -22,7 +22,7 @@ struct MacDNSViewApp: App {
                 Button("About MacDNSView") { showAbout() }
             }
             CommandGroup(replacing: .newItem) {
-                Button("Look Up…") { session.openLookup() }
+                Button("Targets…") { session.openLookup() }
                     .keyboardShortcut("k")
                 Button("Refresh") { session.run() }
                     .keyboardShortcut("r")
